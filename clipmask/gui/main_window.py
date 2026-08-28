@@ -40,20 +40,27 @@ class PlaybackWorker(QThread):
         self.frame_delay = 1.0 / self.fps
         self._is_running = True
         self.audio_engine = None
+        self.audio_source = None
 
     def stop(self):
         self._is_running = False
         if self.audio_engine:
             self.audio_engine.stop()
+        if self.audio_source:
+            self.audio_source.close()
         self.wait()
 
     def run(self):
         try:
             from ..media.audio import AudioPlaybackEngine
-            source = VideoSource(self.video_path)
-            source.seek_exact(self.start_time)
+            from ..media.source import AudioSource
             
-            if source.has_audio:
+            v_source = VideoSource(self.video_path)
+            v_source.seek_exact(self.start_time)
+            
+            self.audio_source = AudioSource(self.video_path)
+            if self.audio_source.has_audio:
+                self.audio_source.seek_exact(self.start_time)
                 self.audio_engine = AudioPlaybackEngine(sample_rate=44100, channels=2)
 
             # 使用高精度系統 Master Clock 同步播放
@@ -61,18 +68,18 @@ class PlaybackWorker(QThread):
             start_pts = self.start_time
             
             while self._is_running:
-                # 1. 讀取並輸出音訊
-                if source.has_audio and self.audio_engine:
-                    audio_chunk = source.read_next_audio_chunk()
-                    if audio_chunk is not None:
-                        self.audio_engine.write(audio_chunk)
+                # 1. 讀取並推送音訊 (每次讀取音訊封包)
+                if self.audio_source and self.audio_source.has_audio and self.audio_engine:
+                    a_chunk = self.audio_source.read_next_chunk()
+                    if a_chunk is not None:
+                        self.audio_engine.write(a_chunk)
 
-                # 2. 讀取並發射畫面
-                frame = source.read_next_frame()
+                # 2. 讀取並發射視訊影格
+                frame = v_source.read_next_frame()
                 if frame is None or not self._is_running:
                     break
                     
-                cur_time = source.current_time
+                cur_time = v_source.current_time
                 self.frame_ready.emit(frame, cur_time)
                 
                 # 計算與系統 Master Clock 的精準時間差 (A/V Sync)
@@ -85,7 +92,9 @@ class PlaybackWorker(QThread):
                 
             if self.audio_engine:
                 self.audio_engine.stop()
-            source.close()
+            if self.audio_source:
+                self.audio_source.close()
+            v_source.close()
         except Exception:
             pass
         self.finished.emit()
