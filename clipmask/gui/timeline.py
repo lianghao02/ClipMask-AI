@@ -516,6 +516,26 @@ class TimelineWidget(QWidget):
     def set_edit_context(self, icon: str, label: str, start: float, end: float, reset_text: str):
         self.lbl_edit_context.setText(f"目前編輯：{icon} {label}　{self._format_time(start)} ～ {self._format_time(end)}")
         self.btn_reset_range.setText(reset_text)
+        
+        # 動態切換按鈕文字，讓使用者 100% 清楚當前作用對象
+        if icon == "🎙":
+            self.btn_in.setText("🎙 設這句開始 (I)")
+            self.btn_in.setToolTip("將選取的字幕開始時間設為當前秒數 (I)")
+            self.btn_out.setText("🎙 設這句結束 (O)")
+            self.btn_out.setToolTip("將選取的字幕結束時間設為當前秒數 (O)")
+            self.btn_reset_range.setEnabled(False)
+        elif icon == "🎭":
+            self.btn_in.setText("🎭 設遮蔽開始 (I)")
+            self.btn_in.setToolTip("將選取的遮蔽起始時間設為當前秒數 (I)")
+            self.btn_out.setText("🎭 設遮蔽結束 (O)")
+            self.btn_out.setToolTip("將選取的遮蔽結束時間設為當前秒數 (O)")
+            self.btn_reset_range.setEnabled(False)
+        else:
+            self.btn_in.setText("✂ 設剪輯起點 (I)")
+            self.btn_in.setToolTip("設定全片剪輯/工作區間起點 (I)")
+            self.btn_out.setText("✂ 設剪輯終點 (O)")
+            self.btn_out.setToolTip("設定全片剪輯/工作區間終點 (O)")
+            self.btn_reset_range.setEnabled(True)
 
     def update_state(self, current_time: float, in_time: float, out_time: float, keyframe_times: List[float], speech_segments: list = None, subtitles: list = None, selected_sub_id: int = -1, uncovered_ranges: list = None):
         self.current_time = current_time
