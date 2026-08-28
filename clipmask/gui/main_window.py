@@ -1,6 +1,5 @@
 """
-ClipMask-AI Main Window (智慧自動命名與防重名版)
-匯出時自動帶入原檔名、起訖時間碼或時間戳，徹底解決重複命名困擾。
+ClipMask-AI Main Window (支援時間軸拖拉選取剪輯區間與即時長度提示)
 """
 import sys
 import os
@@ -195,13 +194,15 @@ class MainWindow(QMainWindow):
         self.video_view.file_dropped.connect(self.load_video_path)
         left_layout.addWidget(self.video_view, stretch=1)
 
-        # 專業手帳時間軸控制器
+        # 專業手帳時間軸控制器 (支援滑鼠拖拉選區間)
         self.timeline = TimelineWidget()
         self.timeline.play_toggled.connect(self._on_play_toggled)
         self.timeline.seek_requested.connect(self.seek_to)
         self.timeline.step_requested.connect(self.step_frame)
         self.timeline.set_in_point.connect(self._set_in_point)
         self.timeline.set_out_point.connect(self._set_out_point)
+        self.timeline.reset_range_requested.connect(self._reset_work_range)
+        self.timeline.range_selected.connect(self._on_range_drag_selected)
         self.timeline.prev_keyframe_requested.connect(self._jump_prev_keyframe)
         self.timeline.next_keyframe_requested.connect(self._jump_next_keyframe)
         self.timeline.toggle_keyframe_at_current.connect(self._toggle_keyframe_at_current)
@@ -256,7 +257,7 @@ class MainWindow(QMainWindow):
         row_strength.addWidget(self.spin_strength)
         style_layout.addLayout(row_strength)
 
-        lbl_hint = QLabel("💡 快捷技巧：\n• 支援直接拖曳影片進視窗\n• 左右鍵 ← →: 跳轉 1.0 秒\n• 上下鍵 ↑ ↓: 微調 0.1 秒\n• 滾輪: 逐格微調 (Shift: ±5格)\n• 鍵盤 K: 快速打上/刪除關鍵影格 🔷")
+        lbl_hint = QLabel("💡 剪輯與操作技巧：\n• 在時間軸【右鍵拖拉】或【Shift+左鍵】: 直接框出要剪輯的區間！\n• 點「🔄 全片」可瞬間恢復全片範圍\n• 左右鍵 ← →: 跳轉 1.0 秒\n• 上下鍵 ↑ ↓: 微調 0.1 秒\n• 滾輪: 逐格微調")
         lbl_hint.setWordWrap(True)
         lbl_hint.setStyleSheet("color: #78716c; font-size: 11px; margin-top: 4px; line-height: 1.4;")
         style_layout.addWidget(lbl_hint)
@@ -532,8 +533,9 @@ class MainWindow(QMainWindow):
 
         in_t = self.project.work_range.in_time
         out_t = min(self.video_source.duration, self.project.work_range.out_time)
+        dur = out_t - in_t
 
-        progress_dialog = QProgressDialog("正在進行 AI 人臉連續追蹤偵測，請稍候...", "取消", 0, 100, self)
+        progress_dialog = QProgressDialog(f"正在針對工作區間 ({in_t:.1f}s ~ {out_t:.1f}s, 共 {dur:.1f}秒) 進行 AI 追蹤偵測...", "取消", 0, 100, self)
         progress_dialog.setWindowTitle("AI 人臉偵測中")
         progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
         progress_dialog.setAutoClose(True)
@@ -549,9 +551,9 @@ class MainWindow(QMainWindow):
                 self.project.tracks.extend(tracks)
                 self._refresh_track_list()
                 self.seek_to(in_t)
-                QMessageBox.information(self, "AI 偵測完成", f"共偵測並建立 {len(tracks)} 條人物追蹤軌跡！")
+                QMessageBox.information(self, "AI 偵測完成", f"在所選區間內共偵測並建立 {len(tracks)} 條人物追蹤軌跡！")
             else:
-                QMessageBox.information(self, "AI 偵測完成", "在工作區間內未偵測到明顯人臉。")
+                QMessageBox.information(self, "AI 偵測完成", "在該區間內未偵測到明顯人臉。")
 
         def on_ai_error(err_msg):
             progress_dialog.close()
@@ -625,7 +627,19 @@ class MainWindow(QMainWindow):
             self.project.work_range.out_time = self.video_source.current_time
             self._update_timeline_state()
 
-    # ──── 智慧產生不重複匯出檔名 ────
+    def _reset_work_range(self):
+        if self.video_source and self.project.work_range:
+            self.project.work_range.in_time = 0.0
+            self.project.work_range.out_time = self.video_source.duration
+            self._update_timeline_state()
+
+    def _on_range_drag_selected(self, in_time: float, out_time: float):
+        if self.video_source and self.project.work_range:
+            self.project.work_range.in_time = in_time
+            self.project.work_range.out_time = out_time
+            self.seek_to(in_time)
+            self._update_timeline_state()
+
     def _generate_default_export_name(self, mode: str = "redacted") -> str:
         if not self.video_source or not self.project.source:
             return f"output_{mode}.mp4"
@@ -634,13 +648,14 @@ class MainWindow(QMainWindow):
         dir_name = os.path.dirname(src_path)
         base_name = os.path.splitext(os.path.basename(src_path))[0]
         
+        in_s = int(self.project.work_range.in_time) if self.project.work_range else 0
+        out_s = int(self.project.work_range.out_time) if self.project.work_range else int(self.video_source.duration)
+        
         if mode == "fast":
-            in_s = int(self.project.work_range.in_time) if self.project.work_range else 0
-            out_s = int(self.project.work_range.out_time) if self.project.work_range else int(self.video_source.duration)
             suggested = f"{base_name}_cut_{in_s}s_to_{out_s}s.mp4"
         else:
             time_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-            suggested = f"{base_name}_redacted_{time_str}.mp4"
+            suggested = f"{base_name}_redacted_{in_s}s_to_{out_s}s_{time_str}.mp4"
             
         return os.path.join(dir_name, suggested)
 
