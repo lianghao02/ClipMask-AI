@@ -15,18 +15,43 @@ from ..ai.subtitles import SubtitleManager
 class FastCopyExporter:
     @staticmethod
     def export(source_path: str, in_time: float, out_time: float, output_path: str) -> bool:
-        duration = max(0.1, out_time - in_time)
-        cmd = [
-            "ffmpeg", "-y",
-            "-ss", f"{in_time:.3f}",
-            "-i", source_path,
-            "-t", f"{duration:.3f}",
-            "-c", "copy",
-            output_path
-        ]
+        """純原生 PyAV 無損快速串流剪輯 (零外部依賴、免裝 ffmpeg、2 秒秒出)"""
         try:
-            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-            return res.returncode == 0
+            in_container = av.open(source_path)
+            out_container = av.open(output_path, mode="w")
+
+            streams_map = {}
+            # 複製視訊與音訊串流模板
+            for in_stream in in_container.streams:
+                if in_stream.type in ("video", "audio"):
+                    out_stream = out_container.add_stream_from_template(in_stream)
+                    streams_map[in_stream] = out_stream
+
+            if not streams_map:
+                in_container.close()
+                out_container.close()
+                return False
+
+            v_stream = in_container.streams.video[0] if in_container.streams.video else None
+            if v_stream:
+                target_pts = int(round(in_time / float(v_stream.time_base)))
+                in_container.seek(target_pts, any_frame=False, backward=True, stream=v_stream)
+                end_pts = int(round(out_time / float(v_stream.time_base)))
+            else:
+                end_pts = None
+
+            for packet in in_container.demux(list(streams_map.keys())):
+                if packet.dts is None:
+                    continue
+                if packet.stream == v_stream and packet.pts is not None and end_pts is not None:
+                    if packet.pts > end_pts:
+                        break
+                packet.stream = streams_map[packet.stream]
+                out_container.mux(packet)
+
+            in_container.close()
+            out_container.close()
+            return True
         except Exception:
             return False
 
