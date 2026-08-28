@@ -27,6 +27,6 @@
 
 ## 2. 核心數據結構 (Models)
 
-- `ProjectState`：包含 `VideoMetadata`、`WorkRange`、`List[Track]` 與 `List[SubtitleItem]`，支援完整 JSON 序列化。
+- `ProjectState`：包含 `SourceMetadata`、`WorkRange`、`List[Track]` 與字幕字典清單，支援完整 JSON 序列化。
 - `Track`：由多顆 `Keyframe (time, pts, rect_px)` 組成，支援多目標多標籤。
-- `SubtitleItem`：包含 `id`, `start_sec`, `end_sec`, `text`，可自動與 VAD 語音段磁吸對齊。
+- `SubtitleItem`：執行期資料類別，包含 `id`、`start_sec`、`end_sec`、`text`；寫入 `ProjectState` 時使用相容的字幕字典資料。

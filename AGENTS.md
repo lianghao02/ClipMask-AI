@@ -11,15 +11,15 @@
 - **視訊解碼引擎**：`PyAV` (FFmpeg C Binding)，嚴格精確對齊 PTS 時間戳，相容 VFR 與長 GOP 串流。
 - **解碼管線隔離 (Decoupled Pipeline)**：
   - `VideoSource`：主畫面播放與拖曳（支援 `seek_fast` 關鍵影格秒刷與 `seek_exact` 精確解碼）。
-  - `ThumbnailExtractor`：獨立低負載懸浮縮圖管線，在時間軸 Hover 時非同步提取 $160\times90$ 縮圖。
+  - `ThumbnailExtractor`：獨立低負載懸浮縮圖管線，在時間軸 Hover 時提取 $160\times90$ 縮圖。
 - **AI 視覺模組**：
   - `FaceDetector` (`models/face/face_detection_yunet_2023mar.onnx`)：YuNet 深度學習人臉偵測，預設門檻 `0.35`，支援遠景小臉、多目標捕捉與 3.0s 動作關聯聚合。
   - `MicroTracker`：基於 OpenCV CSRT 的手動框選向後追蹤器。
   - `TrackEvaluator`：關鍵影格 Lerp 線性內插與 25% 安全外擴 Padding 邊界計算。
 - **純聲學 VAD 模組**：
-  - `VoiceActivityDetector`：PyAV 音軌短時 RMS 能量與動態門檻掃描，0.02 秒提取人聲區間，徹底避開 STT 方言錯字困擾。
+  - `VoiceActivityDetector`：PyAV 音軌短時 RMS 能量與動態門檻掃描；預設以 50ms 視窗提取人聲活動區間，避免引入 STT 文字辨識。
 - **無損秒出引擎**：
-  - `FastCopyExporter`：純原生 PyAV `add_stream_from_template` 封包轉發，零系統 ffmpeg.exe 依賴，2 秒內完成切片。
+  - `FastCopyExporter`：純原生 PyAV `add_stream_from_template` 封包轉發，零系統 `ffmpeg.exe` 依賴；實際輸出時間依來源檔、儲存媒體與容器而定。
 - **Single-pass 壓制引擎**：
   - `RenderExporter`：逐影格套用馬賽克/高斯模糊、繁中字卡燒錄並以 PyAV 壓制輸出。
 

@@ -4,7 +4,7 @@
 
 - **捨棄外部 FFmpeg.exe，全面改為純原生 PyAV Stream Copy**：
   - 原因：部分 Windows 機器未將 ffmpeg 設入 PATH，導致無損剪輯失敗。
-  - 處方：使用 PyAV `add_stream_from_template` 與封包級 `mux` 轉發，達到 0 外部依賴、0.02 秒無損極速秒出。
+  - 處方：使用 PyAV `add_stream_from_template` 與封包級 `mux` 轉發，達成零外部可執行檔依賴的串流複製；輸出速度依來源檔與儲存媒體而定。
 - **純聲學 VAD 取代語音辨識 (STT) 語音標記**：
   - 原因：現場採訪、吵雜環境與國台語/在地口音容易造成 AI 錯字連篇。
   - 處方：使用短時 RMS 能量與動態門檻直接提取真實發音區間，時間軸顯示鼠尾草綠語音條，打字按 Enter 一鍵磁吸起訖秒數。
