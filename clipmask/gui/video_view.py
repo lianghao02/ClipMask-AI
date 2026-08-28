@@ -49,7 +49,7 @@ class VideoGraphicsView(QGraphicsView):
         self.scene.setSceneRect(0, 0, width, height)
         self.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
-    def update_frame_data(self, frame_rgb: np.ndarray, tracks: List[Track], subtitles: List[SubtitleItem], current_time: float, live_typing_text: str = ""):
+    def update_frame_data(self, frame_rgb: np.ndarray, tracks: List[Track], subtitles: List[SubtitleItem], current_time: float, live_typing_text: str = "", is_speech_active: bool = False):
         orig_h, orig_w = frame_rgb.shape[:2]
         if self.video_w != orig_w or self.video_h != orig_h:
             self.set_video_dimensions(orig_w, orig_h)
@@ -69,6 +69,9 @@ class VideoGraphicsView(QGraphicsView):
 
         if target_sub_text:
             display_rgb = SubtitleManager.draw_subtitle_on_image(display_rgb, target_sub_text)
+        elif is_speech_active:
+            # 當有偵測到人聲但尚未建立字幕時，右下角顯示柔和的語音提示
+            display_rgb = SubtitleManager.draw_speech_indicator(display_rgb)
 
         bytes_per_line = 3 * orig_w
         qimg = QImage(display_rgb.data, orig_w, orig_h, bytes_per_line, QImage.Format.Format_RGB888)

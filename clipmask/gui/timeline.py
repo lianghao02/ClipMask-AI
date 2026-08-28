@@ -21,6 +21,7 @@ class TimelineTrackCanvas(QWidget):
         self.in_time = 0.0
         self.out_time = 0.0
         self.keyframe_times: List[float] = []
+        self.speech_segments: list = []  # [(start_sec, end_sec), ...]
         
         # 拖拉狀態
         self.is_seeking = False
@@ -28,12 +29,14 @@ class TimelineTrackCanvas(QWidget):
         self.drag_start_time = 0.0
         self.temp_drag_time = 0.0
 
-    def update_state(self, current_time: float, duration: float, in_time: float, out_time: float, keyframe_times: List[float]):
+    def update_state(self, current_time: float, duration: float, in_time: float, out_time: float, keyframe_times: List[float], speech_segments: list = None):
         self.current_time = current_time
         self.duration = max(0.001, duration)
         self.in_time = in_time
         self.out_time = out_time if out_time > in_time else duration
         self.keyframe_times = keyframe_times
+        if speech_segments is not None:
+            self.speech_segments = speech_segments
         self.update()
 
     def time_to_x(self, t: float) -> float:
@@ -58,7 +61,17 @@ class TimelineTrackCanvas(QWidget):
         painter.setPen(QPen(QColor(220, 215, 204), 1.5))
         painter.drawRoundedRect(0, 0, w, h, 6, 6)
 
-        # 2. 繪製 Work Range 區間帶 (或正在拖拉中的臨時區間)
+        # 2. 繪製語音聲波活動區間 (鼠尾草綠人聲條 🌿)
+        for seg in self.speech_segments:
+            s_t = seg.start_sec if hasattr(seg, 'start_sec') else seg[0]
+            e_t = seg.end_sec if hasattr(seg, 'end_sec') else seg[1]
+            if e_t > s_t:
+                sx = self.time_to_x(s_t)
+                ex = self.time_to_x(e_t)
+                seg_w = max(3.0, ex - sx)
+                painter.fillRect(QRectF(sx, 1, seg_w, 5), QColor(95, 135, 104, 210))
+
+        # 3. 繪製 Work Range 區間帶 (或正在拖拉中的臨時區間)
         display_in = self.in_time
         display_out = self.out_time
         
@@ -77,7 +90,7 @@ class TimelineTrackCanvas(QWidget):
             painter.drawLine(int(x_in), 3, int(x_in), h - 3)
             painter.drawLine(int(x_out), 3, int(x_out), h - 3)
 
-        # 3. 刻度線
+        # 4. 刻度線
         painter.setPen(QPen(QColor(198, 192, 180), 1))
         steps = 10
         for i in range(1, steps):
@@ -258,13 +271,13 @@ class TimelineWidget(QWidget):
         self.out_time = duration
         self.update_state(0.0, self.in_time, self.out_time, [])
 
-    def update_state(self, current_time: float, in_time: float, out_time: float, keyframe_times: List[float]):
+    def update_state(self, current_time: float, in_time: float, out_time: float, keyframe_times: List[float], speech_segments: list = None):
         self.current_time = current_time
         self.in_time = in_time
         self.out_time = out_time if out_time > in_time else self.duration
         self.keyframe_times = keyframe_times
         
-        self.canvas.update_state(current_time, self.duration, self.in_time, self.out_time, keyframe_times)
+        self.canvas.update_state(current_time, self.duration, self.in_time, self.out_time, keyframe_times, speech_segments)
         
         cur_str = self._format_time(self.current_time)
         dur_str = self._format_time(self.duration)

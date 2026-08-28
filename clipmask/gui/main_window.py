@@ -23,6 +23,7 @@ from ..media.source import VideoSource
 from ..track.tracker import MicroTracker
 from ..ai.detector import FaceDetector
 from ..ai.subtitles import SubtitleManager, SubtitleItem
+from ..ai.vad import VoiceActivityDetector, SpeechSegment
 from ..export.exporter import FastCopyExporter, RenderExporter
 
 # ── 1. 播放背景 Worker ──
@@ -122,7 +123,19 @@ class ExportWorker(QThread):
         except Exception as e:
             self.finished.emit(False, str(e))
 
-# ── 4. 主視窗 ──
+# ── 4. 語音活動偵測 (VAD) 背景 Worker ──
+class VadWorker(QThread):
+    finished = Signal(list)
+
+    def __init__(self, video_path: str):
+        super().__init__()
+        self.video_path = video_path
+
+    def run(self):
+        segments = VoiceActivityDetector.scan_audio_speech_segments(self.video_path)
+        self.finished.emit(segments)
+
+# ── 5. 主視窗 ──
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -134,9 +147,11 @@ class MainWindow(QMainWindow):
         self.project = ProjectState()
         self.video_source: VideoSource = None
         self.current_frame_rgb = None
+        self.speech_segments: list = []
         self.playback_worker: PlaybackWorker = None
         self.ai_worker: AiDetectWorker = None
         self.export_worker: ExportWorker = None
+        self.vad_worker: VadWorker = None
         
         self.init_ui()
         self.setup_shortcuts()
@@ -400,8 +415,18 @@ class MainWindow(QMainWindow):
             self._refresh_track_list()
             self._refresh_sub_list()
             self.setWindowTitle(f"ClipMask-AI — {os.path.basename(path)}")
+
+            # 啟動背景人聲活動偵測 (VAD)
+            self.speech_segments.clear()
+            self.vad_worker = VadWorker(path)
+            self.vad_worker.finished.connect(self._on_vad_finished)
+            self.vad_worker.start()
         except Exception as e:
             QMessageBox.critical(self, "載入影片失敗", f"無法解碼影片檔案：\n{path}\n\n錯誤訊息：{e}")
+
+    def _on_vad_finished(self, segments):
+        self.speech_segments = segments
+        self._update_timeline_state()
 
     def seek_to(self, seconds: float):
         if not self.video_source:
@@ -409,7 +434,14 @@ class MainWindow(QMainWindow):
         frame = self.video_source.seek_exact(seconds)
         if frame is not None:
             self.current_frame_rgb = frame
-            self.video_view.update_frame_data(frame, self.project.tracks, self.project.subtitles, self.video_source.current_time)
+            is_speech = VoiceActivityDetector.find_current_speech_segment(self.speech_segments, self.video_source.current_time) is not None
+            self.video_view.update_frame_data(
+                frame,
+                self.project.tracks,
+                self.project.subtitles,
+                self.video_source.current_time,
+                is_speech_active=is_speech
+            )
             self._update_timeline_state()
 
     def step_frame(self, delta: int):
@@ -455,7 +487,14 @@ class MainWindow(QMainWindow):
         self.current_frame_rgb = frame_rgb
         if self.video_source:
             self.video_source.current_time = current_time
-        self.video_view.update_frame_data(frame_rgb, self.project.tracks, self.project.subtitles, current_time)
+        is_speech = VoiceActivityDetector.find_current_speech_segment(self.speech_segments, current_time) is not None
+        self.video_view.update_frame_data(
+            frame_rgb,
+            self.project.tracks,
+            self.project.subtitles,
+            current_time,
+            is_speech_active=is_speech
+        )
         self._update_timeline_state()
 
     @Slot()
@@ -474,7 +513,7 @@ class MainWindow(QMainWindow):
         if 0 <= row < len(self.project.tracks):
             kf_times = [kf.time for kf in self.project.tracks[row].keyframes]
             
-        self.timeline.update_state(cur_t, in_t, out_t, kf_times)
+        self.timeline.update_state(cur_t, in_t, out_t, kf_times, self.speech_segments)
 
     def _on_user_drawn_rect(self, x: int, y: int, w: int, h: int):
         if not self.video_source:
@@ -663,10 +702,18 @@ class MainWindow(QMainWindow):
             return
             
         cur_t = self.video_source.current_time
-        end_t = min(self.video_source.duration, cur_t + 3.0)
+        
+        # 智慧磁吸：若當前秒數落在某語音區間內，自動對齊該語音段的真實起訖點
+        matched_seg = VoiceActivityDetector.find_current_speech_segment(self.speech_segments, cur_t, tolerance=0.3)
+        if matched_seg:
+            start_t = matched_seg.start_sec
+            end_t = min(self.video_source.duration, matched_seg.end_sec)
+        else:
+            start_t = cur_t
+            end_t = min(self.video_source.duration, cur_t + 3.0)
         
         new_id = len(self.project.subtitles) + 1
-        item = SubtitleItem(id=new_id, start_sec=cur_t, end_sec=end_t, text=text)
+        item = SubtitleItem(id=new_id, start_sec=start_t, end_sec=end_t, text=text)
         self.project.subtitles.append(item)
         self.project.subtitles.sort(key=lambda s: s.start_sec)
         

@@ -134,6 +134,41 @@ class SubtitleManager:
         return np.array(pil_img.convert("RGB"))
 
     @staticmethod
+    def draw_speech_indicator(image_rgb: np.ndarray) -> np.ndarray:
+        """當偵測到人聲但尚未聽打時，在畫面右下角顯示柔和的語音偵測徽章"""
+        h, w = image_rgb.shape[:2]
+        pil_img = Image.fromarray(image_rgb).convert("RGBA")
+        draw = ImageDraw.Draw(pil_img)
+
+        badge_text = "🎙️ 偵測到人聲 (按 T 聽打)"
+        font_size = max(13, int(h * 0.025))
+        try:
+            font_path = "C:\\Windows\\Fonts\\msjh.ttc"
+            font = ImageFont.truetype(font_path, font_size)
+        except Exception:
+            font = ImageFont.load_default()
+
+        bbox = draw.textbbox((0, 0), badge_text, font=font)
+        bw = bbox[2] - bbox[0]
+        bh = bbox[3] - bbox[1]
+
+        pad_x = 12
+        pad_y = 6
+        box_w = bw + pad_x * 2
+        box_h = bh + pad_y * 2
+
+        x1 = w - 16
+        x0 = x1 - box_w
+        y1 = h - 20
+        y0 = y1 - box_h
+
+        # 繪製莫蘭迪鼠尾草綠半透明底
+        draw.rounded_rectangle([x0, y0, x1, y1], radius=6, fill=(95, 135, 104, 210))
+        draw.text((x0 + pad_x, y0 + pad_y - 1), badge_text, font=font, fill=(255, 255, 255, 255))
+
+        return np.array(pil_img.convert("RGB"))
+
+    @staticmethod
     def _time_str_to_sec(t_str: str) -> float:
         try:
             parts = t_str.replace(",", ".").split(":")
