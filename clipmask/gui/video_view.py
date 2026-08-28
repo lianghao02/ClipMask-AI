@@ -1,11 +1,10 @@
 ﻿"""
-ClipMask-AI Video Graphics View (高效能版)
-使用固定 QGraphicsPixmapItem + 原生像素座標系映射，大幅降低 GC 與記憶體頻寬開銷。
+ClipMask-AI Video Graphics View (穩定深拷貝版)
+使用 QImage 深拷貝直接更新 Pixmap，保證執行緒安全與不閃退。
 """
 from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsRectItem, QGraphicsPixmapItem
 from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QBrush
 from PySide6.QtCore import Qt, QRectF, Signal, QPointF
-import numpy as np
 from typing import Optional, Tuple, List
 from ..models.project import Track
 from ..track.evaluator import TrackEvaluator
@@ -31,7 +30,6 @@ class VideoGraphicsView(QGraphicsView):
         self.video_w = 0
         self.video_h = 0
         
-        # 繪圖狀態
         self.is_drawing = False
         self.draw_start_pt = QPointF()
         self.preview_rect_item: Optional[QGraphicsRectItem] = None
@@ -43,17 +41,12 @@ class VideoGraphicsView(QGraphicsView):
         self.scene.setSceneRect(0, 0, width, height)
         self.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
-    def update_frame(self, rgb_array: np.ndarray, tracks: List[Track], current_time: float):
-        h, w, channels = rgb_array.shape
-        if self.video_w != w or self.video_h != h:
-            self.set_video_dimensions(w, h)
+    def update_qimage(self, qimg: QImage, tracks: List[Track], current_time: float, orig_w: int, orig_h: int):
+        if self.video_w != orig_w or self.video_h != orig_h:
+            self.set_video_dimensions(orig_w, orig_h)
 
-        # 低複製將 numpy array 轉為 QPixmap
-        bytes_per_line = channels * w
-        qimg = QImage(rgb_array.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
         self.pixmap_item.setPixmap(QPixmap.fromImage(qimg))
         
-        # 更新遮蔽框
         for item in self.mask_items:
             self.scene.removeItem(item)
         self.mask_items.clear()
@@ -73,7 +66,6 @@ class VideoGraphicsView(QGraphicsView):
         if self.scene.sceneRect().isValid() and self.video_w > 0:
             self.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
-    # ──── 滑鼠手動畫框 ────
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and self.video_w > 0:
             scene_pos = self.mapToScene(event.pos())

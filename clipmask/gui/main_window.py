@@ -1,6 +1,7 @@
 ﻿"""
-ClipMask-AI Main Window (非同步高效能播放版)
-使用 QThread 背景解碼 Worker，徹底消除主執行緒卡頓與記憶體爆載。
+ClipMask-AI Main Window (記憶體安全與穩定播放版)
+1. 傳遞深拷貝 QImage 避免跨執行緒 Dangling Pointer
+2. 簡潔穩定的背景 Worker 避免衝突
 """
 import sys
 import os
@@ -12,6 +13,7 @@ from PySide6.QtWidgets import (
     QFileDialog, QListWidget, QListWidgetItem, QLabel, QGroupBox,
     QMessageBox, QSplitter, QProgressBar, QComboBox, QSpinBox
 )
+from PySide6.QtGui import QImage
 from PySide6.QtCore import Qt, QThread, Signal, Slot
 from .video_view import VideoGraphicsView
 from .timeline import TimelineWidget
@@ -23,8 +25,8 @@ from ..ai.subtitles import SubtitleManager
 from ..export.exporter import FastCopyExporter, RenderExporter
 
 class PlaybackWorker(QThread):
-    """背景解碼 Worker，維持穩定幀率並將解碼結果傳回 UI"""
-    frame_ready = Signal(np.ndarray, float)
+    # 傳遞 QImage (安全深拷貝) 與當前秒數
+    frame_ready = Signal(QImage, float, int, int)
     finished = Signal()
 
     def __init__(self, video_path: str, start_time: float, fps: float):
@@ -37,34 +39,36 @@ class PlaybackWorker(QThread):
 
     def stop(self):
         self._is_running = False
-        self.wait(500)
+        self.wait(1000)
 
     def run(self):
-        source = VideoSource(self.video_path)
-        source.seek_exact(self.start_time)
-        
-        while self._is_running:
-            t0 = time.perf_counter()
-            frame = source.read_next_frame()
-            if frame is None or not self._is_running:
-                break
+        try:
+            source = VideoSource(self.video_path)
+            source.seek_exact(self.start_time)
+            
+            while self._is_running:
+                t0 = time.perf_counter()
+                frame = source.read_next_frame()
+                if frame is None or not self._is_running:
+                    break
+                    
+                cur_time = source.current_time
+                orig_h, orig_w = frame.shape[:2]
                 
-            cur_time = source.current_time
-            
-            # 若解析度超過 1920 寬度，降採樣加速預覽渲染
-            h, w = frame.shape[:2]
-            if w > 1920:
-                scale = 1920.0 / w
-                frame = cv2.resize(frame, (1920, int(h * scale)), interpolation=cv2.INTER_LINEAR)
+                # 轉成 QImage 並深拷貝，徹底解決 Windows 跨執行緒記憶體回收閃退
+                bytes_per_line = 3 * orig_w
+                qimg = QImage(frame.data, orig_w, orig_h, bytes_per_line, QImage.Format.Format_RGB888).copy()
                 
-            self.frame_ready.emit(frame, cur_time)
+                self.frame_ready.emit(qimg, cur_time, orig_w, orig_h)
+                
+                elapsed = time.perf_counter() - t0
+                sleep_time = max(0.001, self.frame_delay - elapsed)
+                time.sleep(sleep_time)
+                
+            source.close()
+        except Exception:
+            pass
             
-            # 精確控制播放幀率
-            elapsed = time.perf_counter() - t0
-            sleep_time = max(0.001, self.frame_delay - elapsed)
-            time.sleep(sleep_time)
-            
-        source.close()
         self.finished.emit()
 
 class MainWindow(QMainWindow):
@@ -75,7 +79,7 @@ class MainWindow(QMainWindow):
         
         self.project = ProjectState()
         self.video_source: VideoSource = None
-        self.current_frame = None
+        self.current_qimage = None
         self.face_detector = None
         self.playback_worker: PlaybackWorker = None
         
@@ -228,8 +232,10 @@ class MainWindow(QMainWindow):
             return
         frame = self.video_source.seek_exact(seconds)
         if frame is not None:
-            self.current_frame = frame
-            self.video_view.update_frame(frame, self.project.tracks, self.video_source.current_time)
+            h, w = frame.shape[:2]
+            qimg = QImage(frame.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
+            self.current_qimage = qimg
+            self.video_view.update_qimage(qimg, self.project.tracks, self.video_source.current_time, w, h)
             self.timeline.update_time_display(self.video_source.current_time)
 
     def step_frame(self, delta: int):
@@ -270,12 +276,12 @@ class MainWindow(QMainWindow):
             self.playback_worker = None
         self.timeline.set_playing_state(False)
 
-    @Slot(np.ndarray, float)
-    def _on_worker_frame(self, frame: np.ndarray, current_time: float):
-        self.current_frame = frame
+    @Slot(QImage, float, int, int)
+    def _on_worker_frame(self, qimg: QImage, current_time: float, width: int, height: int):
+        self.current_qimage = qimg
         if self.video_source:
             self.video_source.current_time = current_time
-        self.video_view.update_frame(frame, self.project.tracks, current_time)
+        self.video_view.update_qimage(qimg, self.project.tracks, current_time, width, height)
         self.timeline.update_time_display(current_time)
 
     @Slot()
@@ -300,8 +306,14 @@ class MainWindow(QMainWindow):
         self.project.tracks.append(track)
         self._refresh_track_list()
         self.track_list.setCurrentRow(len(self.project.tracks) - 1)
-        if self.current_frame is not None:
-            self.video_view.update_frame(self.current_frame, self.project.tracks, cur_t)
+        if self.current_qimage is not None and self.video_source:
+            self.video_view.update_qimage(
+                self.current_qimage, 
+                self.project.tracks, 
+                cur_t,
+                self.video_source.width,
+                self.video_source.height
+            )
 
     def _track_selected_forward(self):
         self._stop_playback()
@@ -375,23 +387,41 @@ class MainWindow(QMainWindow):
         row = self.track_list.currentRow()
         if 0 <= row < len(self.project.tracks):
             self.project.tracks[row].mask.style = "mosaic" if index == 0 else "blur"
-            if self.current_frame is not None and self.video_source:
-                self.video_view.update_frame(self.current_frame, self.project.tracks, self.video_source.current_time)
+            if self.current_qimage is not None and self.video_source:
+                self.video_view.update_qimage(
+                    self.current_qimage,
+                    self.project.tracks,
+                    self.video_source.current_time,
+                    self.video_source.width,
+                    self.video_source.height
+                )
 
     def _on_strength_changed(self, val: int):
         row = self.track_list.currentRow()
         if 0 <= row < len(self.project.tracks):
             self.project.tracks[row].mask.strength = val
-            if self.current_frame is not None and self.video_source:
-                self.video_view.update_frame(self.current_frame, self.project.tracks, self.video_source.current_time)
+            if self.current_qimage is not None and self.video_source:
+                self.video_view.update_qimage(
+                    self.current_qimage,
+                    self.project.tracks,
+                    self.video_source.current_time,
+                    self.video_source.width,
+                    self.video_source.height
+                )
 
     def _delete_selected_track(self):
         row = self.track_list.currentRow()
         if 0 <= row < len(self.project.tracks):
             del self.project.tracks[row]
             self._refresh_track_list()
-            if self.current_frame is not None and self.video_source:
-                self.video_view.update_frame(self.current_frame, self.project.tracks, self.video_source.current_time)
+            if self.current_qimage is not None and self.video_source:
+                self.video_view.update_qimage(
+                    self.current_qimage,
+                    self.project.tracks,
+                    self.video_source.current_time,
+                    self.video_source.width,
+                    self.video_source.height
+                )
 
     def _import_srt(self):
         path, _ = QFileDialog.getOpenFileName(self, "匯入 SRT 字幕", "", "SRT Files (*.srt)")
