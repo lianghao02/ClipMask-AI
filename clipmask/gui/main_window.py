@@ -1,5 +1,5 @@
 ﻿"""
-ClipMask-AI Main Window (方向鍵多級跳轉 + 滾輪逐格微調 + 即時馬賽克預覽完整版)
+ClipMask-AI Main Window (支援拖曳開檔 Drag & Drop 完整版)
 """
 import sys
 import os
@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QSplitter, QProgressBar, QComboBox, QSpinBox,
     QProgressDialog
 )
-from PySide6.QtGui import QImage, QKeySequence, QShortcut, QKeyEvent
+from PySide6.QtGui import QImage, QKeySequence, QShortcut, QDragEnterEvent, QDropEvent
 from PySide6.QtCore import Qt, QThread, Signal, Slot
 from .video_view import VideoGraphicsView
 from .timeline import TimelineWidget
@@ -128,6 +128,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("ClipMask-AI — 智慧影音去識別化手帳工作站")
         self.resize(1380, 880)
         self.setStyleSheet(MORANDI_JOURNAL_QSS)
+        self.setAcceptDrops(True)  # 啟用全視窗拖曳開檔
         
         self.project = ProjectState()
         self.video_source: VideoSource = None
@@ -155,7 +156,8 @@ class MainWindow(QMainWindow):
 
         # 上方功能列
         top_bar = QHBoxLayout()
-        self.btn_open = QPushButton("📂 開啟影片")
+        self.btn_open = QPushButton("📂 開啟 / 拖曳影片")
+        self.btn_open.setToolTip("點擊選取或直接將影片檔案拖曳至視窗內")
         self.btn_open.setStyleSheet("padding: 7px 16px;")
         self.btn_open.clicked.connect(self.open_video)
         top_bar.addWidget(self.btn_open)
@@ -165,7 +167,6 @@ class MainWindow(QMainWindow):
         self.btn_ai_detect.clicked.connect(self.run_ai_face_detection)
         top_bar.addWidget(self.btn_ai_detect)
 
-        # 即時預覽效果開關
         self.btn_toggle_preview = QPushButton("👁️ 即時效果預覽: 關")
         self.btn_toggle_preview.setToolTip("切換是否直接顯示真實馬賽克/模糊效果")
         self.btn_toggle_preview.clicked.connect(self._toggle_real_mask_preview)
@@ -185,7 +186,7 @@ class MainWindow(QMainWindow):
         top_bar.addStretch()
         left_layout.addLayout(top_bar)
 
-        # 視訊畫面檢視 (支援滾輪微調)
+        # 視訊畫面檢視
         self.video_view = VideoGraphicsView()
         self.video_view.rect_drawn.connect(self._on_user_drawn_rect)
         self.video_view.wheel_stepped.connect(self.step_frame)
@@ -252,7 +253,7 @@ class MainWindow(QMainWindow):
         row_strength.addWidget(self.spin_strength)
         style_layout.addLayout(row_strength)
 
-        lbl_hint = QLabel("💡 快捷技巧：\n• 左右鍵 ← →: 前後跳轉 1.0 秒\n• 上下鍵 ↑ ↓: 微調 0.1 秒\n• 滑鼠滾輪: 逐格微調 (Shift: ±5格)\n• 鍵盤 K: 快速打上/刪除關鍵影格 🔷")
+        lbl_hint = QLabel("💡 快捷技巧：\n• 支援直接拖曳影片進視窗\n• 左右鍵 ← →: 跳轉 1.0 秒\n• 上下鍵 ↑ ↓: 微調 0.1 秒\n• 滾輪: 逐格微調 (Shift: ±5格)\n• 鍵盤 K: 快速打上/刪除關鍵影格 🔷")
         lbl_hint.setWordWrap(True)
         lbl_hint.setStyleSheet("color: #78716c; font-size: 11px; margin-top: 4px; line-height: 1.4;")
         style_layout.addWidget(lbl_hint)
@@ -280,16 +281,34 @@ class MainWindow(QMainWindow):
 
         main_layout.addWidget(splitter)
 
+    # ──── 拖曳開檔 (Drag & Drop) ────
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                ext = os.path.splitext(url.toLocalFile())[1].lower()
+                if ext in [".mp4", ".mkv", ".mov", ".avi", ".ts", ".wmv", ".flv", ".webm", ".m4v"]:
+                    event.acceptProposedAction()
+                    return
+        super().dragEnterEvent(event)
+
+    def dropEvent(self, event: QDropEvent):
+        for url in event.mimeData().urls():
+            file_path = url.toLocalFile()
+            ext = os.path.splitext(file_path)[1].lower()
+            if ext in [".mp4", ".mkv", ".mov", ".avi", ".ts", ".wmv", ".flv", ".webm", ".m4v"]:
+                self.load_video_path(file_path)
+                event.acceptProposedAction()
+                return
+        super().dropEvent(event)
+
     def setup_shortcuts(self):
         QShortcut(QKeySequence("Space"), self, self.timeline._toggle_play)
         QShortcut(QKeySequence("J"), self, lambda: self.step_frame(-1))
         QShortcut(QKeySequence("L"), self, lambda: self.step_frame(1))
-        # 方向鍵多層級微調
         QShortcut(QKeySequence(Qt.Key.Key_Left), self, lambda: self._jump_relative_time(-1.0))
         QShortcut(QKeySequence(Qt.Key.Key_Right), self, lambda: self._jump_relative_time(1.0))
         QShortcut(QKeySequence(Qt.Key.Key_Up), self, lambda: self._jump_relative_time(0.1))
         QShortcut(QKeySequence(Qt.Key.Key_Down), self, lambda: self._jump_relative_time(-0.1))
-        # 標記快速鍵
         QShortcut(QKeySequence("I"), self, self._set_in_point)
         QShortcut(QKeySequence("O"), self, self._set_out_point)
         QShortcut(QKeySequence("["), self, self._jump_prev_keyframe)
@@ -311,11 +330,12 @@ class MainWindow(QMainWindow):
             self.video_view.update_frame_data(self.current_frame_rgb, self.project.tracks, self.video_source.current_time)
 
     def open_video(self):
+        path, _ = QFileDialog.getOpenFileName(self, "選擇影片", "", "Video Files (*.mp4 *.mkv *.mov *.avi *.ts *.wmv *.webm)")
+        if path:
+            self.load_video_path(path)
+
+    def load_video_path(self, path: str):
         self._stop_playback()
-        path, _ = QFileDialog.getOpenFileName(self, "選擇影片", "", "Video Files (*.mp4 *.mkv *.mov *.avi *.ts)")
-        if not path:
-            return
-            
         if self.video_source:
             self.video_source.close()
             
@@ -327,6 +347,7 @@ class MainWindow(QMainWindow):
         self.timeline.set_duration(self.video_source.duration)
         self.seek_to(0.0)
         self._refresh_track_list()
+        self.setWindowTitle(f"ClipMask-AI — {os.path.basename(path)}")
 
     def seek_to(self, seconds: float):
         if not self.video_source:
