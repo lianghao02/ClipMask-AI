@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QSplitter, QProgressBar, QComboBox, QSpinBox,
     QLineEdit, QProgressDialog
 )
-from PySide6.QtGui import QImage, QKeySequence, QShortcut, QDragEnterEvent, QDropEvent, QIcon
+from PySide6.QtGui import QImage, QKeySequence, QShortcut, QDragEnterEvent, QDropEvent, QIcon, QColor
 from PySide6.QtCore import Qt, QThread, Signal, Slot
 from .video_view import VideoGraphicsView
 from .timeline import TimelineWidget

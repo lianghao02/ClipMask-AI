@@ -71,36 +71,40 @@ class VoiceActivityDetector:
             segments: List[SpeechSegment] = []
             in_speech = False
             start_idx = 0
-            silence_counter = 0
-            max_silence_windows = int(min_silence_duration_ms / frame_duration_ms)
 
-            for i, active in enumerate(is_speech):
-                if active:
-                    if not in_speech:
-                        in_speech = True
-                        start_idx = i
-                    silence_counter = 0
-                else:
-                    if in_speech:
-                        silence_counter += 1
-                        if silence_counter >= max_silence_windows:
-                            end_idx = i - silence_counter
-                            dur_ms = (end_idx - start_idx) * frame_duration_ms
-                            if dur_ms >= min_speech_duration_ms:
-                                s_sec = max(0.0, (start_idx * frame_duration_ms) / 1000.0 - 0.1)
-                                e_sec = (end_idx * frame_duration_ms) / 1000.0 + 0.15
-                                segments.append(SpeechSegment(start_sec=s_sec, end_sec=e_sec))
-                            in_speech = False
-                            silence_counter = 0
+            for i, speech_flag in enumerate(is_speech):
+                if speech_flag and not in_speech:
+                    in_speech = True
+                    start_idx = i
+                elif not speech_flag and in_speech:
+                    in_speech = False
+                    dur_ms = (i - start_idx) * frame_duration_ms
+                    if dur_ms >= min_speech_duration_ms:
+                        s_t = round((start_idx * frame_duration_ms) / 1000.0, 2)
+                        e_t = round((i * frame_duration_ms) / 1000.0, 2)
+                        segments.append(SpeechSegment(start_sec=s_t, end_sec=e_t))
 
-            # 收尾未結束的區間
             if in_speech:
-                s_sec = max(0.0, (start_idx * frame_duration_ms) / 1000.0 - 0.1)
-                e_sec = (num_windows * frame_duration_ms) / 1000.0
-                segments.append(SpeechSegment(start_sec=s_sec, end_sec=e_sec))
+                dur_ms = (len(is_speech) - start_idx) * frame_duration_ms
+                if dur_ms >= min_speech_duration_ms:
+                    s_t = round((start_idx * frame_duration_ms) / 1000.0, 2)
+                    e_t = round((len(is_speech) * frame_duration_ms) / 1000.0, 2)
+                    segments.append(SpeechSegment(start_sec=s_t, end_sec=e_t))
 
-            return segments
+            # 平滑合併太近的語音段
+            if not segments:
+                return []
 
+            merged = [segments[0]]
+            for seg in segments[1:]:
+                prev = merged[-1]
+                gap = seg.start_sec - prev.end_sec
+                if gap <= (min_silence_duration_ms / 1000.0):
+                    merged[-1] = SpeechSegment(start_sec=prev.start_sec, end_sec=seg.end_sec)
+                else:
+                    merged.append(seg)
+
+            return merged
         except Exception:
             return []
 
