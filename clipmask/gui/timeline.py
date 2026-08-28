@@ -267,24 +267,6 @@ class TimelineWidget(QWidget):
         self.canvas.hover_leave.connect(self._on_canvas_leave)
         main_layout.addWidget(self.canvas)
 
-    def _on_canvas_hover(self, hover_sec: float, global_pos: QPoint):
-        if self.is_playing or not self.thumb_extractor:
-            self.hover_popup.hide()
-            return
-            
-        time_str = self._format_time(hover_sec)
-        thumb_rgb = self.thumb_extractor.get_thumbnail(hover_sec, width=160, height=90)
-        self.hover_popup.set_content(thumb_rgb, time_str)
-        
-        # 顯示在游標正上方中央
-        popup_x = global_pos.x() - self.hover_popup.width() // 2
-        popup_y = global_pos.y() - self.hover_popup.height() - 8
-        self.hover_popup.move(popup_x, popup_y)
-        self.hover_popup.show()
-
-    def _on_canvas_leave(self):
-        self.hover_popup.hide()
-
         # 控制列
         ctrl_layout = QHBoxLayout()
         ctrl_layout.setSpacing(6)
@@ -347,6 +329,24 @@ class TimelineWidget(QWidget):
         ctrl_layout.addWidget(self.lbl_time)
 
         main_layout.addLayout(ctrl_layout)
+
+    def _on_canvas_hover(self, hover_sec: float, global_pos: QPoint):
+        if self.is_playing or not self.thumb_extractor:
+            self.hover_popup.hide()
+            return
+            
+        time_str = self._format_time(hover_sec)
+        thumb_rgb = self.thumb_extractor.get_thumbnail(hover_sec, width=160, height=90)
+        self.hover_popup.set_content(thumb_rgb, time_str)
+        
+        # 顯示在游標正上方中央
+        popup_x = global_pos.x() - self.hover_popup.width() // 2
+        popup_y = global_pos.y() - self.hover_popup.height() - 8
+        self.hover_popup.move(popup_x, popup_y)
+        self.hover_popup.show()
+
+    def _on_canvas_leave(self):
+        self.hover_popup.hide()
 
     def set_duration(self, duration: float):
         self.duration = max(0.0, duration)
