@@ -1,8 +1,8 @@
 ﻿"""
-ClipMask-AI Video Graphics View
-使用 QGraphicsScene 與原生像素座標系繪製影片與遮蔽框。
+ClipMask-AI Video Graphics View (高效能版)
+使用固定 QGraphicsPixmapItem + 原生像素座標系映射，大幅降低 GC 與記憶體頻寬開銷。
 """
-from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsRectItem, QGraphicsItem
+from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsRectItem, QGraphicsPixmapItem
 from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QBrush
 from PySide6.QtCore import Qt, QRectF, Signal, QPointF
 import numpy as np
@@ -11,7 +11,6 @@ from ..models.project import Track
 from ..track.evaluator import TrackEvaluator
 
 class VideoGraphicsView(QGraphicsView):
-    # 當使用者用滑鼠在畫面上拉出新框時觸發: (x, y, w, h) 原生像素座標
     rect_drawn = Signal(int, int, int, int)
 
     def __init__(self, parent=None):
@@ -20,11 +19,15 @@ class VideoGraphicsView(QGraphicsView):
         self.setScene(self.scene)
         
         self.setRenderHint(QPainter.RenderHint.Antialiasing, False)
-        self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
         self.setDragMode(QGraphicsView.DragMode.NoDrag)
-        self.setBackgroundBrush(QBrush(QColor(25, 25, 30)))
+        self.setBackgroundBrush(QBrush(QColor(20, 20, 24)))
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         
-        self.current_qimage: Optional[QImage] = None
+        self.pixmap_item = QGraphicsPixmapItem()
+        self.scene.addItem(self.pixmap_item)
+        
         self.video_w = 0
         self.video_h = 0
         
@@ -32,69 +35,55 @@ class VideoGraphicsView(QGraphicsView):
         self.is_drawing = False
         self.draw_start_pt = QPointF()
         self.preview_rect_item: Optional[QGraphicsRectItem] = None
-        
-        # 遮蔽預覽框 Items
         self.mask_items: List[QGraphicsRectItem] = []
 
+    def set_video_dimensions(self, width: int, height: int):
+        self.video_w = width
+        self.video_h = height
+        self.scene.setSceneRect(0, 0, width, height)
+        self.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+
     def update_frame(self, rgb_array: np.ndarray, tracks: List[Track], current_time: float):
-        """更新當前影格與所有遮蔽框（Zero-copy View 管道）"""
-        self.video_h, self.video_w, channels = rgb_array.shape
-        bytes_per_line = channels * self.video_w
+        h, w, channels = rgb_array.shape
+        if self.video_w != w or self.video_h != h:
+            self.set_video_dimensions(w, h)
+
+        # 低複製將 numpy array 轉為 QPixmap
+        bytes_per_line = channels * w
+        qimg = QImage(rgb_array.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
+        self.pixmap_item.setPixmap(QPixmap.fromImage(qimg))
         
-        # Zero-copy 將 numpy array 指標包裝為 QImage
-        self.current_qimage = QImage(
-            rgb_array.data,
-            self.video_w,
-            self.video_h,
-            bytes_per_line,
-            QImage.Format.Format_RGB888
-        )
-        
-        # 更新 Scene 大小為原生像素尺寸
-        self.scene.setSceneRect(0, 0, self.video_w, self.video_h)
-        
-        # 清除舊的遮蔽框，重新計算並繪製
+        # 更新遮蔽框
         for item in self.mask_items:
             self.scene.removeItem(item)
         self.mask_items.clear()
         
-        # 透過 TrackEvaluator 取得所有遮蔽框
         evaluated = TrackEvaluator.evaluate_all_tracks_at(tracks, current_time, self.video_w, self.video_h)
-        for track, (x, y, w, h) in evaluated:
-            rect_item = QGraphicsRectItem(x, y, w, h)
-            # 遮蔽外觀：半透明莫蘭迪紅/灰底 + 虛線框
-            pen = QPen(QColor(230, 80, 80, 240), 2, Qt.PenStyle.DashLine)
-            brush = QBrush(QColor(230, 80, 80, 70))
+        for track, (x, y, mw, mh) in evaluated:
+            rect_item = QGraphicsRectItem(x, y, mw, mh)
+            pen = QPen(QColor(240, 70, 70, 240), 2, Qt.PenStyle.DashLine)
+            brush = QBrush(QColor(240, 70, 70, 80))
             rect_item.setPen(pen)
             rect_item.setBrush(brush)
             self.scene.addItem(rect_item)
             self.mask_items.append(rect_item)
-            
-        self.scene.update()
-        self.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
-
-    def drawBackground(self, painter: QPainter, rect: QRectF):
-        super().drawBackground(painter, rect)
-        if self.current_qimage is not None and not self.current_qimage.isNull():
-            painter.drawImage(0, 0, self.current_qimage)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if self.scene.sceneRect().isValid():
+        if self.scene.sceneRect().isValid() and self.video_w > 0:
             self.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
-    # ──── 滑鼠手動畫框互動 ────
+    # ──── 滑鼠手動畫框 ────
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and self.video_w > 0:
             scene_pos = self.mapToScene(event.pos())
-            # 限制在影片範圍內
             if 0 <= scene_pos.x() <= self.video_w and 0 <= scene_pos.y() <= self.video_h:
                 self.is_drawing = True
                 self.draw_start_pt = scene_pos
                 if not self.preview_rect_item:
                     self.preview_rect_item = QGraphicsRectItem()
                     pen = QPen(QColor(80, 180, 255, 255), 2, Qt.PenStyle.SolidLine)
-                    brush = QBrush(QColor(80, 180, 255, 50))
+                    brush = QBrush(QColor(80, 180, 255, 60))
                     self.preview_rect_item.setPen(pen)
                     self.preview_rect_item.setBrush(brush)
                     self.scene.addItem(self.preview_rect_item)
@@ -120,7 +109,6 @@ class VideoGraphicsView(QGraphicsView):
                 self.scene.removeItem(self.preview_rect_item)
                 self.preview_rect_item = None
                 
-                # 只有當拉出的框大於 5x5 像素時才觸發建立
                 if rect.width() >= 5 and rect.height() >= 5:
                     rx = int(round(rect.x()))
                     ry = int(round(rect.y()))

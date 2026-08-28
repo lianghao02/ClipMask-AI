@@ -1,18 +1,18 @@
 ﻿"""
-ClipMask-AI Main Window (完整版)
-整合 PyAV 幀精確播放、QGraphicsScene 原生像素畫框、
-MicroTracker 向後 2 秒追蹤、AI 人臉自動偵測、SRT 字幕匯入與雙模式匯出。
+ClipMask-AI Main Window (非同步高效能播放版)
+使用 QThread 背景解碼 Worker，徹底消除主執行緒卡頓與記憶體爆載。
 """
 import sys
 import os
-import uuid
+import time
+import cv2
+import numpy as np
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QFileDialog, QListWidget, QListWidgetItem, QLabel, QGroupBox,
-    QMessageBox, QSplitter, QProgressBar, QComboBox, QSpinBox,
-    QCheckBox, QInputDialog
+    QMessageBox, QSplitter, QProgressBar, QComboBox, QSpinBox
 )
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QThread, Signal, Slot
 from .video_view import VideoGraphicsView
 from .timeline import TimelineWidget
 from ..models.project import ProjectState, Track, Keyframe, MaskConfig, WorkRange
@@ -21,6 +21,51 @@ from ..track.tracker import MicroTracker
 from ..ai.detector import FaceDetector
 from ..ai.subtitles import SubtitleManager
 from ..export.exporter import FastCopyExporter, RenderExporter
+
+class PlaybackWorker(QThread):
+    """背景解碼 Worker，維持穩定幀率並將解碼結果傳回 UI"""
+    frame_ready = Signal(np.ndarray, float)
+    finished = Signal()
+
+    def __init__(self, video_path: str, start_time: float, fps: float):
+        super().__init__()
+        self.video_path = video_path
+        self.start_time = start_time
+        self.fps = fps if fps > 0 else 30.0
+        self.frame_delay = 1.0 / self.fps
+        self._is_running = True
+
+    def stop(self):
+        self._is_running = False
+        self.wait(500)
+
+    def run(self):
+        source = VideoSource(self.video_path)
+        source.seek_exact(self.start_time)
+        
+        while self._is_running:
+            t0 = time.perf_counter()
+            frame = source.read_next_frame()
+            if frame is None or not self._is_running:
+                break
+                
+            cur_time = source.current_time
+            
+            # 若解析度超過 1920 寬度，降採樣加速預覽渲染
+            h, w = frame.shape[:2]
+            if w > 1920:
+                scale = 1920.0 / w
+                frame = cv2.resize(frame, (1920, int(h * scale)), interpolation=cv2.INTER_LINEAR)
+                
+            self.frame_ready.emit(frame, cur_time)
+            
+            # 精確控制播放幀率
+            elapsed = time.perf_counter() - t0
+            sleep_time = max(0.001, self.frame_delay - elapsed)
+            time.sleep(sleep_time)
+            
+        source.close()
+        self.finished.emit()
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -32,10 +77,7 @@ class MainWindow(QMainWindow):
         self.video_source: VideoSource = None
         self.current_frame = None
         self.face_detector = None
-        
-        # 播放計時器
-        self.play_timer = QTimer(self)
-        self.play_timer.timeout.connect(self._on_playback_tick)
+        self.playback_worker: PlaybackWorker = None
         
         self.init_ui()
 
@@ -53,7 +95,6 @@ class MainWindow(QMainWindow):
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(6)
 
-        # 上方主要功能列
         top_bar = QHBoxLayout()
         self.btn_open = QPushButton("📂 開啟影片")
         self.btn_open.setStyleSheet("font-weight: bold; padding: 5px 12px;")
@@ -78,12 +119,10 @@ class MainWindow(QMainWindow):
         top_bar.addStretch()
         left_layout.addLayout(top_bar)
 
-        # 視訊畫面檢視
         self.video_view = VideoGraphicsView()
         self.video_view.rect_drawn.connect(self._on_user_drawn_rect)
         left_layout.addWidget(self.video_view, stretch=1)
 
-        # 時間軸控制器
         self.timeline = TimelineWidget()
         self.timeline.play_toggled.connect(self._on_play_toggled)
         self.timeline.seek_requested.connect(self.seek_to)
@@ -100,7 +139,6 @@ class MainWindow(QMainWindow):
         right_layout.setContentsMargins(5, 5, 5, 5)
         right_layout.setSpacing(10)
 
-        # 1. 遮蔽物件清單
         grp_tracks = QGroupBox("📋 遮蔽物件清單 (Tracks)")
         grp_layout = QVBoxLayout(grp_tracks)
         
@@ -120,7 +158,6 @@ class MainWindow(QMainWindow):
 
         right_layout.addWidget(grp_tracks)
 
-        # 2. 遮蔽樣式設定
         grp_style = QGroupBox("⚙️ 遮蔽樣式調整")
         style_layout = QVBoxLayout(grp_style)
         
@@ -141,14 +178,13 @@ class MainWindow(QMainWindow):
         row_strength.addWidget(self.spin_strength)
         style_layout.addLayout(row_strength)
 
-        lbl_hint = QLabel("💡 提示：用滑鼠在影片上拉框即可建立遮蔽，點選「向後追蹤」可自動預測移動路徑。")
+        lbl_hint = QLabel("💡 提示：在畫面上拉框即可建立遮蔽，點選「向後追蹤」可自動預測路徑。")
         lbl_hint.setWordWrap(True)
         lbl_hint.setStyleSheet("color: #888; font-size: 11px; margin-top: 4px;")
         style_layout.addWidget(lbl_hint)
 
         right_layout.addWidget(grp_style)
 
-        # 3. 字幕管理
         grp_subs = QGroupBox("🎙️ 語音字幕 (Subtitles)")
         sub_layout = QVBoxLayout(grp_subs)
         
@@ -170,6 +206,7 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(splitter)
 
     def open_video(self):
+        self._stop_playback()
         path, _ = QFileDialog.getOpenFileName(self, "選擇影片", "", "Video Files (*.mp4 *.mkv *.mov *.avi *.ts)")
         if not path:
             return
@@ -198,10 +235,7 @@ class MainWindow(QMainWindow):
     def step_frame(self, delta: int):
         if not self.video_source:
             return
-        if self.play_timer.isActive():
-            self.play_timer.stop()
-            self.timeline.set_playing_state(False)
-            
+        self._stop_playback()
         dt = delta * (1.0 / self.video_source.fps)
         target_t = max(0.0, min(self.video_source.duration, self.video_source.current_time + dt))
         self.seek_to(target_t)
@@ -210,22 +244,43 @@ class MainWindow(QMainWindow):
         if not self.video_source:
             return
         if playing:
-            interval = int(1000.0 / self.video_source.fps)
-            self.play_timer.start(interval)
+            self._start_playback()
         else:
-            self.play_timer.stop()
+            self._stop_playback()
 
-    def _on_playback_tick(self):
+    def _start_playback(self):
         if not self.video_source:
             return
-        frame = self.video_source.read_next_frame()
-        if frame is None or self.video_source.current_time >= self.video_source.duration:
-            self.play_timer.stop()
-            self.timeline.set_playing_state(False)
-            return
+        cur_t = self.video_source.current_time
+        if cur_t >= self.video_source.duration:
+            cur_t = 0.0
+            
+        self.playback_worker = PlaybackWorker(
+            self.video_source.video_path,
+            cur_t,
+            self.video_source.fps
+        )
+        self.playback_worker.frame_ready.connect(self._on_worker_frame)
+        self.playback_worker.finished.connect(self._on_worker_finished)
+        self.playback_worker.start()
+
+    def _stop_playback(self):
+        if self.playback_worker and self.playback_worker.isRunning():
+            self.playback_worker.stop()
+            self.playback_worker = None
+        self.timeline.set_playing_state(False)
+
+    @Slot(np.ndarray, float)
+    def _on_worker_frame(self, frame: np.ndarray, current_time: float):
         self.current_frame = frame
-        self.video_view.update_frame(frame, self.project.tracks, self.video_source.current_time)
-        self.timeline.update_time_display(self.video_source.current_time)
+        if self.video_source:
+            self.video_source.current_time = current_time
+        self.video_view.update_frame(frame, self.project.tracks, current_time)
+        self.timeline.update_time_display(current_time)
+
+    @Slot()
+    def _on_worker_finished(self):
+        self.timeline.set_playing_state(False)
 
     def _on_user_drawn_rect(self, x: int, y: int, w: int, h: int):
         if not self.video_source:
@@ -249,9 +304,10 @@ class MainWindow(QMainWindow):
             self.video_view.update_frame(self.current_frame, self.project.tracks, cur_t)
 
     def _track_selected_forward(self):
+        self._stop_playback()
         row = self.track_list.currentRow()
         if not (0 <= row < len(self.project.tracks)) or not self.video_source:
-            QMessageBox.warning(self, "提示", "請先從清單中選取一個要向後追蹤的遮蔽物件。")
+            QMessageBox.warning(self, "提示", "請先選取一個遮蔽物件。")
             return
             
         track = self.project.tracks[row]
@@ -259,11 +315,12 @@ class MainWindow(QMainWindow):
         if ok:
             self._refresh_track_list()
             self.seek_to(self.video_source.current_time)
-            QMessageBox.information(self, "追蹤完成", f"已為 [{track.label}] 向後預測並建立關鍵影格！")
+            QMessageBox.information(self, "追蹤完成", f"已為 [{track.label}] 向後預測建立關鍵影格！")
         else:
-            QMessageBox.warning(self, "追蹤失敗", "追蹤器無法初始化或影像無效。")
+            QMessageBox.warning(self, "追蹤失敗", "追蹤器無法初始化。")
 
     def run_ai_face_detection(self):
+        self._stop_playback()
         if not self.video_source or not self.project.work_range:
             QMessageBox.warning(self, "提示", "請先開啟影片。")
             return
@@ -289,9 +346,9 @@ class MainWindow(QMainWindow):
             self.project.tracks.extend(detected_tracks)
             self._refresh_track_list()
             self.seek_to(in_t)
-            QMessageBox.information(self, "AI 偵測完成", f"在工作區間內共偵測到 {len(detected_tracks)} 處人臉目標並已加入清單！")
+            QMessageBox.information(self, "AI 偵測完成", f"共偵測到 {len(detected_tracks)} 處人臉目標！")
         else:
-            QMessageBox.information(self, "AI 偵測完成", "在當前工作區間內未偵測到明顯人臉。")
+            QMessageBox.information(self, "AI 偵測完成", "未偵測到明顯人臉。")
 
     def _refresh_track_list(self):
         cur_row = self.track_list.currentRow()
@@ -355,6 +412,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "工作終點", f"已設定工作終點：{self.video_source.current_time:.3f} 秒")
 
     def export_fast_copy(self):
+        self._stop_playback()
         if not self.video_source or not self.project.source:
             return
         out_path, _ = QFileDialog.getSaveFileName(self, "儲存無損剪輯影片", "fast_trimmed.mp4", "MP4 Files (*.mp4)")
@@ -369,14 +427,12 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "匯出失敗", "FFmpeg Stream Copy 執行失敗。")
 
     def export_render(self):
+        self._stop_playback()
         if not self.video_source or not self.project.source:
             return
         out_path, _ = QFileDialog.getSaveFileName(self, "儲存遮蔽壓制影片", "redacted_output.mp4", "MP4 Files (*.mp4)")
         if not out_path:
             return
-        if self.play_timer.isActive():
-            self.play_timer.stop()
-            self.timeline.set_playing_state(False)
             
         success = RenderExporter.render_export(self.project, out_path)
         if success:
@@ -385,6 +441,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "匯出失敗", "影片壓制失敗，請檢查環境。")
 
     def closeEvent(self, event):
+        self._stop_playback()
         if self.video_source:
             self.video_source.close()
         super().closeEvent(event)
