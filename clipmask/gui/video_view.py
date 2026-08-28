@@ -1,15 +1,19 @@
 ﻿"""
-ClipMask-AI Video Graphics View (莫蘭迪手帳風格)
+ClipMask-AI Video Graphics View (支援滑鼠滾輪逐格微調與即時馬賽克預覽)
 """
 from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsRectItem, QGraphicsPixmapItem
-from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QBrush
+from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QBrush, QWheelEvent
 from PySide6.QtCore import Qt, QRectF, Signal, QPointF
 from typing import Optional, Tuple, List
+import cv2
+import numpy as np
 from ..models.project import Track
 from ..track.evaluator import TrackEvaluator
+from ..export.exporter import RenderExporter
 
 class VideoGraphicsView(QGraphicsView):
     rect_drawn = Signal(int, int, int, int)
+    wheel_stepped = Signal(int)  # delta 幀數 (例如 +1, -1, +5, -5)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -19,7 +23,6 @@ class VideoGraphicsView(QGraphicsView):
         self.setRenderHint(QPainter.RenderHint.Antialiasing, False)
         self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
         self.setDragMode(QGraphicsView.DragMode.NoDrag)
-        # 燕麥紙質外圍邊框底色
         self.setBackgroundBrush(QBrush(QColor(242, 239, 233)))
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -29,6 +32,7 @@ class VideoGraphicsView(QGraphicsView):
         
         self.video_w = 0
         self.video_h = 0
+        self.show_real_mask_preview = False  # 是否開啟真實馬賽克預覽
         
         self.is_drawing = False
         self.draw_start_pt = QPointF()
@@ -41,32 +45,57 @@ class VideoGraphicsView(QGraphicsView):
         self.scene.setSceneRect(0, 0, width, height)
         self.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
-    def update_qimage(self, qimg: QImage, tracks: List[Track], current_time: float, orig_w: int, orig_h: int):
+    def update_frame_data(self, frame_rgb: np.ndarray, tracks: List[Track], current_time: float):
+        orig_h, orig_w = frame_rgb.shape[:2]
         if self.video_w != orig_w or self.video_h != orig_h:
             self.set_video_dimensions(orig_w, orig_h)
 
+        # 若開啟即時馬賽克預覽，先在影像陣列上套用馬賽克
+        display_rgb = frame_rgb.copy()
+        evaluated = TrackEvaluator.evaluate_all_tracks_at(tracks, current_time, self.video_w, self.video_h)
+        
+        if self.show_real_mask_preview:
+            for track, rect in evaluated:
+                display_rgb = RenderExporter.apply_mosaic_or_blur(display_rgb, rect, track.mask.style, track.mask.strength)
+
+        # 顯示底圖
+        bytes_per_line = 3 * orig_w
+        qimg = QImage(display_rgb.data, orig_w, orig_h, bytes_per_line, QImage.Format.Format_RGB888)
         self.pixmap_item.setPixmap(QPixmap.fromImage(qimg))
         
+        # 更新編輯輔助框 (若開啟真實預覽則不顯示外框，保持畫面乾淨)
         for item in self.mask_items:
             self.scene.removeItem(item)
         self.mask_items.clear()
         
-        evaluated = TrackEvaluator.evaluate_all_tracks_at(tracks, current_time, self.video_w, self.video_h)
-        for track, (x, y, mw, mh) in evaluated:
-            rect_item = QGraphicsRectItem(x, y, mw, mh)
-            # 陶土紅虛線 + 半透明陶土紅底
-            pen = QPen(QColor(201, 102, 75, 230), 2, Qt.PenStyle.DashLine)
-            brush = QBrush(QColor(201, 102, 75, 75))
-            rect_item.setPen(pen)
-            rect_item.setBrush(brush)
-            self.scene.addItem(rect_item)
-            self.mask_items.append(rect_item)
+        if not self.show_real_mask_preview:
+            for track, (x, y, mw, mh) in evaluated:
+                rect_item = QGraphicsRectItem(x, y, mw, mh)
+                pen = QPen(QColor(201, 102, 75, 230), 2, Qt.PenStyle.DashLine)
+                brush = QBrush(QColor(201, 102, 75, 70))
+                rect_item.setPen(pen)
+                rect_item.setBrush(brush)
+                self.scene.addItem(rect_item)
+                self.mask_items.append(rect_item)
+
+    # ──── 滑鼠滾輪逐格微調 ────
+    def wheelEvent(self, event: QWheelEvent):
+        delta = event.angleDelta().y()
+        if delta != 0:
+            # 若按住 Shift 則快進/快退 5 幀，否則逐格 1 幀
+            step = 5 if event.modifiers() & Qt.KeyboardModifier.ShiftModifier else 1
+            direction = 1 if delta > 0 else -1
+            self.wheel_stepped.emit(direction * step)
+            event.accept()
+            return
+        super().wheelEvent(event)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if self.scene.sceneRect().isValid() and self.video_w > 0:
             self.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
+    # ──── 滑鼠拉框 ────
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and self.video_w > 0:
             scene_pos = self.mapToScene(event.pos())

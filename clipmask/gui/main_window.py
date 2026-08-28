@@ -1,5 +1,5 @@
 ﻿"""
-ClipMask-AI Main Window (現代莫蘭迪手帳風格版)
+ClipMask-AI Main Window (方向鍵多級跳轉 + 滾輪逐格微調 + 即時馬賽克預覽完整版)
 """
 import sys
 import os
@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QSplitter, QProgressBar, QComboBox, QSpinBox,
     QProgressDialog
 )
-from PySide6.QtGui import QImage, QKeySequence, QShortcut
+from PySide6.QtGui import QImage, QKeySequence, QShortcut, QKeyEvent
 from PySide6.QtCore import Qt, QThread, Signal, Slot
 from .video_view import VideoGraphicsView
 from .timeline import TimelineWidget
@@ -26,7 +26,7 @@ from ..export.exporter import FastCopyExporter, RenderExporter
 
 # ── 1. 播放背景 Worker ──
 class PlaybackWorker(QThread):
-    frame_ready = Signal(QImage, float, int, int)
+    frame_ready = Signal(np.ndarray, float)
     finished = Signal()
 
     def __init__(self, video_path: str, start_time: float, fps: float):
@@ -53,11 +53,7 @@ class PlaybackWorker(QThread):
                     break
                     
                 cur_time = source.current_time
-                orig_h, orig_w = frame.shape[:2]
-                
-                bytes_per_line = 3 * orig_w
-                qimg = QImage(frame.data, orig_w, orig_h, bytes_per_line, QImage.Format.Format_RGB888).copy()
-                self.frame_ready.emit(qimg, cur_time, orig_w, orig_h)
+                self.frame_ready.emit(frame.copy(), cur_time)
                 
                 elapsed = time.perf_counter() - t0
                 sleep_time = max(0.001, self.frame_delay - elapsed)
@@ -135,7 +131,7 @@ class MainWindow(QMainWindow):
         
         self.project = ProjectState()
         self.video_source: VideoSource = None
-        self.current_qimage = None
+        self.current_frame_rgb = None
         self.playback_worker: PlaybackWorker = None
         self.ai_worker: AiDetectWorker = None
         self.export_worker: ExportWorker = None
@@ -169,6 +165,12 @@ class MainWindow(QMainWindow):
         self.btn_ai_detect.clicked.connect(self.run_ai_face_detection)
         top_bar.addWidget(self.btn_ai_detect)
 
+        # 即時預覽效果開關
+        self.btn_toggle_preview = QPushButton("👁️ 即時效果預覽: 關")
+        self.btn_toggle_preview.setToolTip("切換是否直接顯示真實馬賽克/模糊效果")
+        self.btn_toggle_preview.clicked.connect(self._toggle_real_mask_preview)
+        top_bar.addWidget(self.btn_toggle_preview)
+
         top_bar.addSpacing(15)
 
         self.btn_fast_export = QPushButton("⚡ 快速無損剪輯 (Stream Copy)")
@@ -183,9 +185,10 @@ class MainWindow(QMainWindow):
         top_bar.addStretch()
         left_layout.addLayout(top_bar)
 
-        # 視訊畫面檢視
+        # 視訊畫面檢視 (支援滾輪微調)
         self.video_view = VideoGraphicsView()
         self.video_view.rect_drawn.connect(self._on_user_drawn_rect)
+        self.video_view.wheel_stepped.connect(self.step_frame)
         left_layout.addWidget(self.video_view, stretch=1)
 
         # 專業手帳時間軸控制器
@@ -249,9 +252,9 @@ class MainWindow(QMainWindow):
         row_strength.addWidget(self.spin_strength)
         style_layout.addLayout(row_strength)
 
-        lbl_hint = QLabel("💡 提示：在畫面上拉框即可建立遮蔽；選取軌跡後，時間軸會以芥末黃鑽石 (🔷) 顯示關鍵影格點。")
+        lbl_hint = QLabel("💡 快捷技巧：\n• 左右鍵 ← →: 前後跳轉 1.0 秒\n• 上下鍵 ↑ ↓: 微調 0.1 秒\n• 滑鼠滾輪: 逐格微調 (Shift: ±5格)\n• 鍵盤 K: 快速打上/刪除關鍵影格 🔷")
         lbl_hint.setWordWrap(True)
-        lbl_hint.setStyleSheet("color: #8c857b; font-size: 11px; margin-top: 4px;")
+        lbl_hint.setStyleSheet("color: #78716c; font-size: 11px; margin-top: 4px; line-height: 1.4;")
         style_layout.addWidget(lbl_hint)
 
         right_layout.addWidget(grp_style)
@@ -281,11 +284,31 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Space"), self, self.timeline._toggle_play)
         QShortcut(QKeySequence("J"), self, lambda: self.step_frame(-1))
         QShortcut(QKeySequence("L"), self, lambda: self.step_frame(1))
+        # 方向鍵多層級微調
+        QShortcut(QKeySequence(Qt.Key.Key_Left), self, lambda: self._jump_relative_time(-1.0))
+        QShortcut(QKeySequence(Qt.Key.Key_Right), self, lambda: self._jump_relative_time(1.0))
+        QShortcut(QKeySequence(Qt.Key.Key_Up), self, lambda: self._jump_relative_time(0.1))
+        QShortcut(QKeySequence(Qt.Key.Key_Down), self, lambda: self._jump_relative_time(-0.1))
+        # 標記快速鍵
         QShortcut(QKeySequence("I"), self, self._set_in_point)
         QShortcut(QKeySequence("O"), self, self._set_out_point)
         QShortcut(QKeySequence("["), self, self._jump_prev_keyframe)
         QShortcut(QKeySequence("]"), self, self._jump_next_keyframe)
         QShortcut(QKeySequence("K"), self, self._toggle_keyframe_at_current)
+
+    def _jump_relative_time(self, dt: float):
+        if not self.video_source:
+            return
+        self._stop_playback()
+        target_t = max(0.0, min(self.video_source.duration, self.video_source.current_time + dt))
+        self.seek_to(target_t)
+
+    def _toggle_real_mask_preview(self):
+        self.video_view.show_real_mask_preview = not self.video_view.show_real_mask_preview
+        txt = "👁️ 即時效果預覽: 開" if self.video_view.show_real_mask_preview else "👁️ 即時效果預覽: 關"
+        self.btn_toggle_preview.setText(txt)
+        if self.current_frame_rgb is not None and self.video_source:
+            self.video_view.update_frame_data(self.current_frame_rgb, self.project.tracks, self.video_source.current_time)
 
     def open_video(self):
         self._stop_playback()
@@ -310,10 +333,8 @@ class MainWindow(QMainWindow):
             return
         frame = self.video_source.seek_exact(seconds)
         if frame is not None:
-            h, w = frame.shape[:2]
-            qimg = QImage(frame.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
-            self.current_qimage = qimg
-            self.video_view.update_qimage(qimg, self.project.tracks, self.video_source.current_time, w, h)
+            self.current_frame_rgb = frame
+            self.video_view.update_frame_data(frame, self.project.tracks, self.video_source.current_time)
             self._update_timeline_state()
 
     def step_frame(self, delta: int):
@@ -354,12 +375,12 @@ class MainWindow(QMainWindow):
             self.playback_worker = None
         self.timeline.set_playing_state(False)
 
-    @Slot(QImage, float, int, int)
-    def _on_worker_frame(self, qimg: QImage, current_time: float, width: int, height: int):
-        self.current_qimage = qimg
+    @Slot(np.ndarray, float)
+    def _on_worker_frame(self, frame_rgb: np.ndarray, current_time: float):
+        self.current_frame_rgb = frame_rgb
         if self.video_source:
             self.video_source.current_time = current_time
-        self.video_view.update_qimage(qimg, self.project.tracks, current_time, width, height)
+        self.video_view.update_frame_data(frame_rgb, self.project.tracks, current_time)
         self._update_timeline_state()
 
     @Slot()
@@ -398,14 +419,8 @@ class MainWindow(QMainWindow):
         self.project.tracks.append(track)
         self._refresh_track_list()
         self.track_list.setCurrentRow(len(self.project.tracks) - 1)
-        if self.current_qimage is not None and self.video_source:
-            self.video_view.update_qimage(
-                self.current_qimage, 
-                self.project.tracks, 
-                cur_t,
-                self.video_source.width,
-                self.video_source.height
-            )
+        if self.current_frame_rgb is not None and self.video_source:
+            self.video_view.update_frame_data(self.current_frame_rgb, self.project.tracks, cur_t)
 
     def _jump_prev_keyframe(self):
         if not self.video_source:
@@ -535,41 +550,23 @@ class MainWindow(QMainWindow):
         row = self.track_list.currentRow()
         if 0 <= row < len(self.project.tracks):
             self.project.tracks[row].mask.style = "mosaic" if index == 0 else "blur"
-            if self.current_qimage is not None and self.video_source:
-                self.video_view.update_qimage(
-                    self.current_qimage,
-                    self.project.tracks,
-                    self.video_source.current_time,
-                    self.video_source.width,
-                    self.video_source.height
-                )
+            if self.current_frame_rgb is not None and self.video_source:
+                self.video_view.update_frame_data(self.current_frame_rgb, self.project.tracks, self.video_source.current_time)
 
     def _on_strength_changed(self, val: int):
         row = self.track_list.currentRow()
         if 0 <= row < len(self.project.tracks):
             self.project.tracks[row].mask.strength = val
-            if self.current_qimage is not None and self.video_source:
-                self.video_view.update_qimage(
-                    self.current_qimage,
-                    self.project.tracks,
-                    self.video_source.current_time,
-                    self.video_source.width,
-                    self.video_source.height
-                )
+            if self.current_frame_rgb is not None and self.video_source:
+                self.video_view.update_frame_data(self.current_frame_rgb, self.project.tracks, self.video_source.current_time)
 
     def _delete_selected_track(self):
         row = self.track_list.currentRow()
         if 0 <= row < len(self.project.tracks):
             del self.project.tracks[row]
             self._refresh_track_list()
-            if self.current_qimage is not None and self.video_source:
-                self.video_view.update_qimage(
-                    self.current_qimage,
-                    self.project.tracks,
-                    self.video_source.current_time,
-                    self.video_source.width,
-                    self.video_source.height
-                )
+            if self.current_frame_rgb is not None and self.video_source:
+                self.video_view.update_frame_data(self.current_frame_rgb, self.project.tracks, self.video_source.current_time)
 
     def _import_srt(self):
         path, _ = QFileDialog.getOpenFileName(self, "匯入 SRT 字幕", "", "SRT Files (*.srt)")
