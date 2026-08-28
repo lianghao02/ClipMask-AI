@@ -42,7 +42,7 @@ class PlaybackWorker(QThread):
 
     def stop(self):
         self._is_running = False
-        self.wait(500)
+        self.wait()
 
     def run(self):
         try:
@@ -1151,6 +1151,12 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._stop_playback()
+        for worker_name in ("ai_worker", "export_worker", "vad_worker"):
+            w = getattr(self, worker_name, None)
+            if w and w.isRunning():
+                if hasattr(w, "cancel"):
+                    w.cancel()
+                w.wait()
         if self.video_source:
             self.video_source.close()
         if self.thumb_extractor:
