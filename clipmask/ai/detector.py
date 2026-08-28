@@ -1,4 +1,4 @@
-﻿"""
+"""
 ClipMask-AI Vision AI Detector (OpenCV YuNet 深度學習 + 連續多目標軌跡追蹤)
 1. 使用 OpenCV 官方現代深度學習人臉偵測器 YuNet (FaceDetectorYN)
    - 支援 360 度人臉旋轉、側臉、遮擋、遠距離小人臉、暗光高準度辨識
@@ -14,7 +14,7 @@ from ..models.project import Track, Keyframe, MaskConfig
 from ..media.source import VideoSource
 
 class FaceDetector:
-    def __init__(self, model_path: Optional[str] = None, conf_threshold: float = 0.5):
+    def __init__(self, model_path: Optional[str] = None, conf_threshold: float = 0.35):
         if not model_path:
             base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             model_path = os.path.join(base_dir, "models", "face", "face_detection_yunet_2023mar.onnx")
@@ -24,7 +24,7 @@ class FaceDetector:
             
         self.model_path = model_path
         self.conf_threshold = conf_threshold
-        # 初始化 YuNet (預設輸入大小 320x320，推論前動態調整)
+        # 初始化 YuNet (高靈敏度多目標人臉偵測)
         self.detector = cv2.FaceDetectorYN_create(
             model=model_path,
             config="",
@@ -49,8 +49,8 @@ class FaceDetector:
                 # 轉為 int 與邊界保護
                 ix = max(0, min(w_img - 1, int(round(x))))
                 iy = max(0, min(h_img - 1, int(round(y))))
-                iw = max(10, min(w_img - ix, int(round(w))))
-                ih = max(10, min(h_img - iy, int(round(h))))
+                iw = max(8, min(w_img - ix, int(round(w))))
+                ih = max(8, min(h_img - iy, int(round(h))))
                 results.append((ix, iy, iw, ih))
                 
         return results
@@ -82,7 +82,7 @@ class FaceDetector:
         progress_callback: Optional[Callable[[int], None]] = None
     ) -> List[Track]:
         """
-        以 0.25 秒高頻率掃描，並自動將連續偵測到的同一人座標合併為單一 Track 的 Keyframes
+        以高頻率掃描多目標人臉，並自動聚合連續軌跡、填補轉頭/低頭間隙
         """
         active_tracks: List[Track] = []
         cur_t = in_time
@@ -102,16 +102,18 @@ class FaceDetector:
                         if t_idx in matched_track_indices:
                             continue
                         last_kf = track.keyframes[-1]
-                        # 允許 1.5 秒內的動作關聯
-                        if cur_t - last_kf.time > 1.5:
+                        # 允許長達 3.0 秒內的動作關聯 (防止低頭、轉頭導致軌跡中斷)
+                        time_diff = cur_t - last_kf.time
+                        if time_diff > 3.0:
                             continue
                             
                         iou = self._calculate_iou(face_rect, last_kf.rect_px)
                         dist = self._center_distance(face_rect, last_kf.rect_px)
-                        max_diag = max(face_rect[2], face_rect[3]) * 2.5
+                        # 動態追蹤容許半徑
+                        max_diag = max(face_rect[2], face_rect[3]) * (3.0 + time_diff * 0.5)
                         
-                        if iou > 0.15 or dist < max_diag:
-                            score = iou + (1.0 / (dist + 1.0))
+                        if iou > 0.10 or dist < max_diag:
+                            score = (iou * 2.0) + (100.0 / (dist + 1.0))
                             if score > best_score:
                                 best_score = score
                                 best_match_idx = t_idx
@@ -147,6 +149,19 @@ class FaceDetector:
                 progress_callback(min(99, max(0, pct)))
                 
             cur_t += step_sec
+
+        # ── 後處理：安全補齊與微調 (Post-processing) ──
+        # 若某個人物在區間內持續出現超過 1 秒，若最後一顆關鍵影格距離 out_time 小於 1.5 秒，自動補齊至 out_time
+        for track in active_tracks:
+            if len(track.keyframes) >= 3:
+                last_kf = track.keyframes[-1]
+                if out_time - last_kf.time <= 1.5 and last_kf.time < out_time:
+                    track.add_or_update_keyframe(
+                        time=out_time,
+                        pts=int(round(out_time / float(video_source.time_base))) if video_source.time_base else 0,
+                        rect_px=last_kf.rect_px,
+                        source="persistent_extension"
+                    )
 
         if progress_callback:
             progress_callback(100)

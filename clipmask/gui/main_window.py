@@ -253,9 +253,15 @@ class MainWindow(QMainWindow):
         grp_layout.addWidget(self.track_list)
 
         track_btn_layout = QHBoxLayout()
-        self.btn_track_forward = QPushButton("🎯 向後預測 2 秒")
+        self.btn_track_forward = QPushButton("🎯 追蹤2秒")
+        self.btn_track_forward.setToolTip("使用 CSRT 追蹤器向後預測並建立關鍵影格")
         self.btn_track_forward.clicked.connect(self._track_selected_forward)
         track_btn_layout.addWidget(self.btn_track_forward)
+
+        self.btn_persist_track = QPushButton("📌 常駐全段")
+        self.btn_persist_track.setToolTip("將此遮蔽框鎖定並延伸至整個工作區間 (適合固定站位/背景人物)")
+        self.btn_persist_track.clicked.connect(self._persist_selected_track)
+        track_btn_layout.addWidget(self.btn_persist_track)
 
         btn_del_track = QPushButton("🗑️ 刪除")
         btn_del_track.clicked.connect(self._delete_selected_track)
@@ -551,22 +557,60 @@ class MainWindow(QMainWindow):
         if not self.video_source:
             return
         cur_t = self.video_source.current_time
+        in_t = self.project.work_range.in_time if self.project.work_range else 0.0
+        out_t = self.project.work_range.out_time if self.project.work_range else self.video_source.duration
+        
         track_id = f"track_{len(self.project.tracks)+1}"
+        
+        # 智慧建立關鍵影格：自動在當前工作區間前後與當前點鎖定位置 (防脫落、防漏抓)
+        kfs = [Keyframe(time=cur_t, pts=self.video_source.current_pts, rect_px=(x, y, w, h), source="manual")]
+        if abs(cur_t - in_t) > 0.1:
+            kfs.insert(0, Keyframe(time=in_t, pts=int(round(in_t / float(self.video_source.time_base))) if self.video_source.time_base else 0, rect_px=(x, y, w, h), source="manual_in"))
+        if abs(out_t - cur_t) > 0.1:
+            kfs.append(Keyframe(time=out_t, pts=int(round(out_t / float(self.video_source.time_base))) if self.video_source.time_base else 0, rect_px=(x, y, w, h), source="manual_out"))
+
         track = Track(
             id=track_id,
-            label=f"遮蔽 {len(self.project.tracks)+1} ({x},{y})",
+            label=f"遮蔽 {len(self.project.tracks)+1} (手動常駐)",
             mask=MaskConfig(
                 style="mosaic" if self.combo_style.currentIndex() == 0 else "blur",
                 strength=self.spin_strength.value(),
                 padding=0.25
             ),
-            keyframes=[Keyframe(time=cur_t, pts=self.video_source.current_pts, rect_px=(x, y, w, h), source="manual")]
+            keyframes=kfs
         )
         self.project.tracks.append(track)
         self._refresh_track_list()
         self.track_list.setCurrentRow(len(self.project.tracks) - 1)
         if self.current_frame_rgb is not None and self.video_source:
             self.video_view.update_frame_data(self.current_frame_rgb, self.project.tracks, self.project.subtitles, cur_t)
+
+    def _persist_selected_track(self):
+        """將選取的軌跡擴展為全工作區間常駐鎖定"""
+        row = self.track_list.currentRow()
+        if not (0 <= row < len(self.project.tracks)) or not self.video_source:
+            QMessageBox.warning(self, "提示", "請先選取一個遮蔽物件。")
+            return
+            
+        track = self.project.tracks[row]
+        in_t = self.project.work_range.in_time if self.project.work_range else 0.0
+        out_t = self.project.work_range.out_time if self.project.work_range else self.video_source.duration
+        
+        # 取得當前秒數或最新關鍵影格位置
+        from ..track.evaluator import TrackEvaluator
+        cur_t = self.video_source.current_time
+        evaluated = TrackEvaluator.evaluate_track_at(track, cur_t, self.video_source.width, self.video_source.height)
+        rect = evaluated if evaluated else (track.keyframes[0].rect_px if track.keyframes else (100, 100, 100, 100))
+        
+        tb = self.video_source.time_base
+        in_pts = int(round(in_t / float(tb))) if tb else 0
+        out_pts = int(round(out_t / float(tb))) if tb else 0
+        
+        track.add_or_update_keyframe(in_t, in_pts, rect, source="manual_persist")
+        track.add_or_update_keyframe(out_t, out_pts, rect, source="manual_persist")
+        self._refresh_track_list()
+        self.seek_to(cur_t)
+        QMessageBox.information(self, "常駐鎖定", f"已將 [{track.label}] 成功鎖定並延伸至整個工作區間 ({in_t:.2f}s ~ {out_t:.2f}s)！")
 
     def _jump_prev_keyframe(self):
         if not self.video_source:
