@@ -63,7 +63,7 @@ class TimelineTrackCanvas(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(44)
+        self.setFixedHeight(68)
         self.setMouseTracking(True)
         self.duration = 0.0
         self.current_time = 0.0
@@ -117,15 +117,31 @@ class TimelineTrackCanvas(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
         w = self.width()
         h = self.height()
+        mid_y = 36  # 上下軌道分界線
 
-        # 1. 溫潤紙質底槽
-        painter.fillRect(0, 0, w, h, QColor(240, 237, 230))
-        painter.setPen(QPen(QColor(220, 215, 204), 1.5))
+        # 1. 溫潤雙層紙質底槽
+        # 上層：影片與剪輯主軌
+        painter.fillRect(0, 0, w, mid_y, QColor(245, 242, 235))
+        # 下層：字幕專屬軌道
+        painter.fillRect(0, mid_y, w, h - mid_y, QColor(238, 234, 226))
+        
+        # 外框與軌道分界線
+        painter.setPen(QPen(QColor(218, 212, 200), 1.5))
         painter.drawRoundedRect(0, 0, w, h, 6, 6)
+        painter.setPen(QPen(QColor(222, 216, 205), 1, Qt.PenStyle.DashLine))
+        painter.drawLine(0, mid_y, w, mid_y)
 
-        # 2. 繪製語音聲波活動區間 (頂部鼠尾草綠人聲條 🌿)
+        # 2. 上軌：繪製未覆蓋安全警示細線 (頂部陶土紅 ⚠️)
+        for ur_start, ur_end in self.uncovered_ranges:
+            if ur_end > ur_start:
+                ux1 = self.time_to_x(ur_start)
+                ux2 = self.time_to_x(ur_end)
+                painter.fillRect(QRectF(ux1, 0, max(2.0, ux2 - ux1), 3), QColor(215, 85, 65, 220))
+
+        # 3. 上軌：繪製語音聲波活動區間 (鼠尾草綠人聲條 🌿)
         for seg in self.speech_segments:
             s_t = seg.start_sec if hasattr(seg, 'start_sec') else seg[0]
             e_t = seg.end_sec if hasattr(seg, 'end_sec') else seg[1]
@@ -133,39 +149,9 @@ class TimelineTrackCanvas(QWidget):
                 sx = self.time_to_x(s_t)
                 ex = self.time_to_x(e_t)
                 seg_w = max(3.0, ex - sx)
-                painter.fillRect(QRectF(sx, 1, seg_w, 5), QColor(95, 135, 104, 210))
+                painter.fillRect(QRectF(sx, 3, seg_w, 6), QColor(95, 135, 104, 220))
 
-        # 3. 繪製未覆蓋安全警示細線 (頂部柔和陶土紅 ⚠️)
-        for ur_start, ur_end in self.uncovered_ranges:
-            if ur_end > ur_start:
-                ux1 = self.time_to_x(ur_start)
-                ux2 = self.time_to_x(ur_end)
-                painter.fillRect(QRectF(ux1, 0, max(2.0, ux2 - ux1), 2), QColor(215, 85, 65, 220))
-
-        # 4. 繪製聽打字幕區段 (底部莫蘭迪紫丁香色條 🎙️)
-        for sub in self.subtitles:
-            s_t = sub.start_sec
-            e_t = sub.end_sec
-            if e_t > s_t:
-                sx = self.time_to_x(s_t)
-                ex = self.time_to_x(e_t)
-                sub_w = max(5.0, ex - sx)
-                is_selected = (sub.id == self.selected_sub_id)
-                
-                if is_selected:
-                    # 選取中：高亮明亮紫粉色 + 左右手柄外框
-                    painter.fillRect(QRectF(sx, h - 10, sub_w, 8), QColor(165, 135, 185, 230))
-                    painter.setPen(QPen(QColor(130, 95, 155, 255), 1.5))
-                    painter.drawRect(QRectF(sx, h - 10, sub_w, 8))
-                    # 左右手柄標記 [ ]
-                    painter.setPen(QPen(QColor(255, 255, 255, 240), 2))
-                    painter.drawLine(int(sx + 1), h - 9, int(sx + 1), h - 3)
-                    painter.drawLine(int(ex - 1), h - 9, int(ex - 1), h - 3)
-                else:
-                    # 一般狀態：柔和莫蘭迪灰紫色
-                    painter.fillRect(QRectF(sx, h - 7, sub_w, 5), QColor(154, 144, 168, 180))
-
-        # 5. 繪製 Work Range 區間帶 (或正在拖拉中的臨時區間)
+        # 4. 上軌：繪製 Work Range 剪輯區間帶
         display_in = self.in_time
         display_out = self.out_time
         
@@ -177,24 +163,24 @@ class TimelineTrackCanvas(QWidget):
             x_in = self.time_to_x(display_in)
             x_out = self.time_to_x(display_out)
             range_w = max(2.0, x_out - x_in)
-            painter.fillRect(QRectF(x_in, 3, range_w, h - 6), QColor(92, 124, 153, 75))
+            painter.fillRect(QRectF(x_in, 9, range_w, mid_y - 10), QColor(92, 124, 153, 75))
             
             # 手帳紙膠帶感邊界
             painter.setPen(QPen(QColor(92, 124, 153, 230), 2))
-            painter.drawLine(int(x_in), 3, int(x_in), h - 3)
-            painter.drawLine(int(x_out), 3, int(x_out), h - 3)
+            painter.drawLine(int(x_in), 9, int(x_in), mid_y)
+            painter.drawLine(int(x_out), 9, int(x_out), mid_y)
 
-        # 6. 刻度線
-        painter.setPen(QPen(QColor(198, 192, 180), 1))
+        # 5. 上軌：刻度線
+        painter.setPen(QPen(QColor(205, 198, 186), 1))
         steps = 10
         for i in range(1, steps):
             sx = (w / steps) * i
-            painter.drawLine(int(sx), h - 14, int(sx), h - 9)
+            painter.drawLine(int(sx), mid_y - 6, int(sx), mid_y)
 
-        # 7. 關鍵影格鑽石 (芥末暖黃 🔷)
+        # 6. 上軌：關鍵影格鑽石 (芥末暖黃 🔷)
         for kf_t in self.keyframe_times:
             kx = self.time_to_x(kf_t)
-            ky = h / 2.0
+            ky = 21.0
             size = 6.0
             
             diamond = QPolygonF([
@@ -207,12 +193,60 @@ class TimelineTrackCanvas(QWidget):
             painter.setBrush(QBrush(QColor(235, 175, 55, 230)))
             painter.drawPolygon(diamond)
 
-        # 8. 當前播放時間指針 (陶土紅)
+        # 7. 下軌：繪製 Pro 字幕色塊與文字內容 🎙️
+        font = painter.font()
+        font.setFamily("Microsoft JhengHei")
+        font.setPointSize(9)
+        font.setBold(True)
+        painter.setFont(font)
+
+        sub_y = mid_y + 4
+        sub_h = 24
+
+        for sub in self.subtitles:
+            s_t = sub.start_sec
+            e_t = sub.end_sec
+            if e_t > s_t:
+                sx = self.time_to_x(s_t)
+                ex = self.time_to_x(e_t)
+                sub_w = max(18.0, ex - sx)
+                is_selected = (sub.id == self.selected_sub_id)
+                rect_box = QRectF(sx, sub_y, sub_w, sub_h)
+                
+                if is_selected:
+                    # 選取中：莫蘭迪亮紫粉 ＋ 手柄把手
+                    painter.fillRect(rect_box, QColor(168, 130, 192, 235))
+                    painter.setPen(QPen(QColor(126, 82, 156, 255), 2))
+                    painter.drawRoundedRect(rect_box, 4, 4)
+                    
+                    # 左右防滑拖拉手柄
+                    painter.fillRect(QRectF(sx, sub_y, 5, sub_h), QColor(126, 82, 156, 255))
+                    painter.fillRect(QRectF(sx + sub_w - 5, sub_y, 5, sub_h), QColor(126, 82, 156, 255))
+                    painter.setPen(QPen(QColor(255, 255, 255, 240), 1))
+                    painter.drawLine(int(sx + 2), sub_y + 4, int(sx + 2), sub_y + sub_h - 4)
+                    painter.drawLine(int(sx + sub_w - 3), sub_y + 4, int(sx + sub_w - 3), sub_y + sub_h - 4)
+                    
+                    # 字幕文字 (亮白)
+                    painter.setPen(QColor(255, 255, 255))
+                else:
+                    # 一般狀態：優雅莫蘭迪灰紫
+                    painter.fillRect(rect_box, QColor(154, 144, 168, 190))
+                    painter.setPen(QPen(QColor(135, 125, 150, 220), 1))
+                    painter.drawRoundedRect(rect_box, 4, 4)
+                    painter.setPen(QColor(245, 242, 248))
+
+                # 繪製字幕簡短文字 (自動截斷過長內容)
+                text_rect = QRectF(sx + 7, sub_y, max(0.0, sub_w - 14), sub_h)
+                if text_rect.width() > 15:
+                    elided_text = painter.fontMetrics().elidedText(sub.text, Qt.TextElideMode.ElideRight, int(text_rect.width()))
+                    painter.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, elided_text)
+
+        # 8. 全局當前播放時間指針 (陶土紅)
         cx = self.time_to_x(self.current_time)
         painter.setPen(QPen(QColor(201, 122, 99, 255), 2.5))
         painter.drawLine(int(cx), 0, int(cx), h)
         
-        tri_size = 4.5
+        tri_size = 5.0
         tri = QPolygonF([
             QPointF(cx - tri_size, 0),
             QPointF(cx + tri_size, 0),
@@ -222,17 +256,16 @@ class TimelineTrackCanvas(QWidget):
         painter.drawPolygon(tri)
 
     def _find_sub_hit(self, pos_x: float, pos_y: float):
-        """判斷是否點擊到字幕色塊，回傳 (sub, mode: 'left'|'right'|'body'|None)"""
-        h = self.height()
-        if pos_y < h - 14:
+        """判斷是否點擊到字幕色塊 (下軌區域)，回傳 (sub, mode: 'left'|'right'|'body'|None)"""
+        if pos_y < 35:
             return None, None
         for sub in self.subtitles:
             sx = self.time_to_x(sub.start_sec)
             ex = self.time_to_x(sub.end_sec)
-            if sx - 4 <= pos_x <= ex + 4:
-                if abs(pos_x - sx) <= 5:
+            if sx - 6 <= pos_x <= ex + 6:
+                if abs(pos_x - sx) <= 7:
                     return sub, "left"
-                elif abs(pos_x - ex) <= 5:
+                elif abs(pos_x - ex) <= 7:
                     return sub, "right"
                 else:
                     return sub, "body"
