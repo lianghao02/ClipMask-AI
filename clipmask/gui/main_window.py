@@ -1,9 +1,11 @@
-﻿"""
-ClipMask-AI Main Window (強化拖曳開檔與錯誤回報版)
+"""
+ClipMask-AI Main Window (智慧自動命名與防重名版)
+匯出時自動帶入原檔名、起訖時間碼或時間戳，徹底解決重複命名困擾。
 """
 import sys
 import os
 import time
+from datetime import datetime
 import cv2
 import numpy as np
 from PySide6.QtWidgets import (
@@ -186,7 +188,7 @@ class MainWindow(QMainWindow):
         top_bar.addStretch()
         left_layout.addLayout(top_bar)
 
-        # 視訊畫面檢視 (連接畫布拖曳與滾輪微調)
+        # 視訊畫面檢視
         self.video_view = VideoGraphicsView()
         self.video_view.rect_drawn.connect(self._on_user_drawn_rect)
         self.video_view.wheel_stepped.connect(self.step_frame)
@@ -623,13 +625,35 @@ class MainWindow(QMainWindow):
             self.project.work_range.out_time = self.video_source.current_time
             self._update_timeline_state()
 
+    # ──── 智慧產生不重複匯出檔名 ────
+    def _generate_default_export_name(self, mode: str = "redacted") -> str:
+        if not self.video_source or not self.project.source:
+            return f"output_{mode}.mp4"
+            
+        src_path = self.project.source.path
+        dir_name = os.path.dirname(src_path)
+        base_name = os.path.splitext(os.path.basename(src_path))[0]
+        
+        if mode == "fast":
+            in_s = int(self.project.work_range.in_time) if self.project.work_range else 0
+            out_s = int(self.project.work_range.out_time) if self.project.work_range else int(self.video_source.duration)
+            suggested = f"{base_name}_cut_{in_s}s_to_{out_s}s.mp4"
+        else:
+            time_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+            suggested = f"{base_name}_redacted_{time_str}.mp4"
+            
+        return os.path.join(dir_name, suggested)
+
     def export_fast_copy(self):
         self._stop_playback()
         if not self.video_source or not self.project.source:
             return
-        out_path, _ = QFileDialog.getSaveFileName(self, "儲存無損剪輯影片", "fast_trimmed.mp4", "MP4 Files (*.mp4)")
+            
+        default_name = self._generate_default_export_name(mode="fast")
+        out_path, _ = QFileDialog.getSaveFileName(self, "儲存無損剪輯影片", default_name, "MP4 Files (*.mp4)")
         if not out_path:
             return
+            
         in_t = self.project.work_range.in_time if self.project.work_range else 0.0
         out_t = self.project.work_range.out_time if self.project.work_range else self.video_source.duration
         success = FastCopyExporter.export(self.project.source.path, in_t, out_t, out_path)
@@ -642,7 +666,9 @@ class MainWindow(QMainWindow):
         self._stop_playback()
         if not self.video_source or not self.project.source:
             return
-        out_path, _ = QFileDialog.getSaveFileName(self, "儲存遮蔽壓制影片", "redacted_output.mp4", "MP4 Files (*.mp4)")
+            
+        default_name = self._generate_default_export_name(mode="redacted")
+        out_path, _ = QFileDialog.getSaveFileName(self, "儲存遮蔽壓制影片", default_name, "MP4 Files (*.mp4)")
         if not out_path:
             return
 
