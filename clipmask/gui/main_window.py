@@ -1,7 +1,7 @@
 ﻿"""
-ClipMask-AI Main Window (完全非同步版)
-AI 偵測、向後追蹤、影片播放全部移至 QThread 背景執行，
-搭配 QProgressDialog，主 UI 永遠流暢不卡死、杜絕 0xC0000005。
+ClipMask-AI Main Window (全面非同步與進度條版)
+播放、AI 偵測、追蹤、匯出壓制全部在 QThread 背景執行，
+配備即時 QProgressDialog，主 UI 永遠流暢不卡死。
 """
 import sys
 import os
@@ -56,7 +56,6 @@ class PlaybackWorker(QThread):
                 cur_time = source.current_time
                 orig_h, orig_w = frame.shape[:2]
                 
-                # 轉成 QImage 深拷貝確保執行緒安全
                 bytes_per_line = 3 * orig_w
                 qimg = QImage(frame.data, orig_w, orig_h, bytes_per_line, QImage.Format.Format_RGB888).copy()
                 self.frame_ready.emit(qimg, cur_time, orig_w, orig_h)
@@ -127,7 +126,35 @@ class AiDetectWorker(QThread):
         except Exception as e:
             self.error.emit(str(e))
 
-# ── 3. 主視窗 ──
+# ── 3. 匯出壓制背景 Worker ──
+class ExportWorker(QThread):
+    progress = Signal(int)
+    finished = Signal(bool, str)
+
+    def __init__(self, project: ProjectState, output_path: str):
+        super().__init__()
+        self.project = project
+        self.output_path = output_path
+        self._is_cancelled = False
+
+    def cancel(self):
+        self._is_cancelled = True
+
+    def run(self):
+        try:
+            def on_progress(pct: int):
+                self.progress.emit(pct)
+
+            success = RenderExporter.render_export(
+                self.project,
+                self.output_path,
+                progress_callback=on_progress
+            )
+            self.finished.emit(success, self.output_path)
+        except Exception as e:
+            self.finished.emit(False, str(e))
+
+# ── 4. 主視窗 ──
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -139,6 +166,7 @@ class MainWindow(QMainWindow):
         self.current_qimage = None
         self.playback_worker: PlaybackWorker = None
         self.ai_worker: AiDetectWorker = None
+        self.export_worker: ExportWorker = None
         
         self.init_ui()
 
@@ -520,6 +548,7 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.critical(self, "匯出失敗", "FFmpeg Stream Copy 執行失敗。")
 
+    # ──── 非同步遮蔽影片匯出 ────
     def export_render(self):
         self._stop_playback()
         if not self.video_source or not self.project.source:
@@ -527,12 +556,26 @@ class MainWindow(QMainWindow):
         out_path, _ = QFileDialog.getSaveFileName(self, "儲存遮蔽壓制影片", "redacted_output.mp4", "MP4 Files (*.mp4)")
         if not out_path:
             return
-            
-        success = RenderExporter.render_export(self.project, out_path)
-        if success:
-            QMessageBox.information(self, "匯出成功", f"去識別化影片壓制完成！已儲存至：\n{out_path}")
-        else:
-            QMessageBox.critical(self, "匯出失敗", "影片壓制失敗，請檢查環境。")
+
+        progress_dialog = QProgressDialog("正在壓制遮蔽影片，請稍候...", "取消", 0, 100, self)
+        progress_dialog.setWindowTitle("影片壓制匯出中")
+        progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        progress_dialog.setAutoClose(True)
+        progress_dialog.setMinimumDuration(0)
+
+        self.export_worker = ExportWorker(self.project, out_path)
+        self.export_worker.progress.connect(progress_dialog.setValue)
+        progress_dialog.canceled.connect(self.export_worker.cancel)
+
+        def on_export_finished(success, msg):
+            progress_dialog.close()
+            if success:
+                QMessageBox.information(self, "匯出成功", f"去識別化影片壓制完成！已儲存至：\n{msg}")
+            else:
+                QMessageBox.critical(self, "匯出失敗", f"影片壓制失敗:\n{msg}")
+
+        self.export_worker.finished.connect(on_export_finished)
+        self.export_worker.start()
 
     def closeEvent(self, event):
         self._stop_playback()
