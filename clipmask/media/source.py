@@ -46,6 +46,14 @@ class VideoSource:
         self.current_time = 0.0
         self._decode_gen = None
 
+        # 音軌支援 (A/V Sync)
+        self.has_audio = len(self.container.streams.audio) > 0
+        self.audio_stream = self.container.streams.audio[0] if self.has_audio else None
+        self.audio_resampler = None
+        self._audio_decode_gen = None
+        if self.has_audio:
+            self.audio_resampler = av.AudioResampler(format="fltp", layout="stereo", rate=44100)
+
     def time_to_pts(self, seconds: float) -> int:
         return int(round(seconds / self.time_base))
 
@@ -57,6 +65,8 @@ class VideoSource:
         target_pts = self.time_to_pts(target_seconds)
         self.container.seek(target_pts, any_frame=False, backward=True, stream=self.stream)
         self._decode_gen = self.container.decode(self.stream)
+        if self.has_audio:
+            self._audio_decode_gen = self.container.decode(self.audio_stream)
         try:
             for frame in self._decode_gen:
                 if frame.pts is not None:
@@ -72,6 +82,8 @@ class VideoSource:
         target_pts = self.time_to_pts(target_seconds)
         self.container.seek(target_pts, any_frame=False, backward=True, stream=self.stream)
         self._decode_gen = self.container.decode(self.stream)
+        if self.has_audio:
+            self._audio_decode_gen = self.container.decode(self.audio_stream)
         
         last_rgb = None
         last_pts = None
@@ -111,6 +123,31 @@ class VideoSource:
             return frame.to_ndarray(format="rgb24")
         except Exception:
             return None
+
+    def read_next_audio_chunk(self) -> Optional[np.ndarray]:
+        """讀取下一段音訊 PCM 樣本 (float32, 44100Hz 立體聲 [N, 2])"""
+        if not self.has_audio or self.audio_stream is None:
+            return None
+            
+        if self._audio_decode_gen is None:
+            self._audio_decode_gen = self.container.decode(self.audio_stream)
+            
+        try:
+            a_frame = next(self._audio_decode_gen)
+            resampled = self.audio_resampler.resample(a_frame)
+            if not resampled:
+                return None
+            
+            # 將 resampled frames 合併為 [N, 2] float32
+            chunks = []
+            for rf in resampled:
+                arr = rf.to_ndarray() # shape: (2, N)
+                chunks.append(arr.T)  # shape: (N, 2)
+            if chunks:
+                return np.vstack(chunks).astype(np.float32)
+        except Exception:
+            return None
+        return None
 
     def close(self):
         if self.container:

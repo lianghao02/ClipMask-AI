@@ -27,7 +27,7 @@ from ..ai.subtitles import SubtitleManager, SubtitleItem
 from ..ai.vad import VoiceActivityDetector, SpeechSegment
 from ..export.exporter import FastCopyExporter, RenderExporter
 
-# ── 1. 播放背景 Worker (Master Clock 精確時鐘同步) ──
+# ── 1. 播放背景 Worker (音畫絕對同步與實時音訊輸出) ──
 class PlaybackWorker(QThread):
     frame_ready = Signal(np.ndarray, float)
     finished = Signal()
@@ -39,21 +39,35 @@ class PlaybackWorker(QThread):
         self.fps = fps if fps > 0 else 30.0
         self.frame_delay = 1.0 / self.fps
         self._is_running = True
+        self.audio_engine = None
 
     def stop(self):
         self._is_running = False
+        if self.audio_engine:
+            self.audio_engine.stop()
         self.wait()
 
     def run(self):
         try:
+            from ..media.audio import AudioPlaybackEngine
             source = VideoSource(self.video_path)
             source.seek_exact(self.start_time)
             
+            if source.has_audio:
+                self.audio_engine = AudioPlaybackEngine(sample_rate=44100, channels=2)
+
             # 使用高精度系統 Master Clock 同步播放
             start_wall = time.perf_counter()
             start_pts = self.start_time
             
             while self._is_running:
+                # 1. 讀取並輸出音訊
+                if source.has_audio and self.audio_engine:
+                    audio_chunk = source.read_next_audio_chunk()
+                    if audio_chunk is not None:
+                        self.audio_engine.write(audio_chunk)
+
+                # 2. 讀取並發射畫面
                 frame = source.read_next_frame()
                 if frame is None or not self._is_running:
                     break
@@ -61,7 +75,7 @@ class PlaybackWorker(QThread):
                 cur_time = source.current_time
                 self.frame_ready.emit(frame, cur_time)
                 
-                # 計算與系統 Master Clock 的精準時間差
+                # 計算與系統 Master Clock 的精準時間差 (A/V Sync)
                 expected_elapsed = cur_time - start_pts
                 actual_elapsed = time.perf_counter() - start_wall
                 delay_needed = expected_elapsed - actual_elapsed
@@ -69,6 +83,8 @@ class PlaybackWorker(QThread):
                 if delay_needed > 0.002:
                     time.sleep(delay_needed)
                 
+            if self.audio_engine:
+                self.audio_engine.stop()
             source.close()
         except Exception:
             pass
