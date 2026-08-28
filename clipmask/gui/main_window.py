@@ -27,7 +27,7 @@ from ..ai.subtitles import SubtitleManager, SubtitleItem
 from ..ai.vad import VoiceActivityDetector, SpeechSegment
 from ..export.exporter import FastCopyExporter, RenderExporter
 
-# ── 1. 播放背景 Worker ──
+# ── 1. 播放背景 Worker (Master Clock 精確時鐘同步) ──
 class PlaybackWorker(QThread):
     frame_ready = Signal(np.ndarray, float)
     finished = Signal()
@@ -49,18 +49,25 @@ class PlaybackWorker(QThread):
             source = VideoSource(self.video_path)
             source.seek_exact(self.start_time)
             
+            # 使用高精度系統 Master Clock 同步播放
+            start_wall = time.perf_counter()
+            start_pts = self.start_time
+            
             while self._is_running:
-                t0 = time.perf_counter()
                 frame = source.read_next_frame()
                 if frame is None or not self._is_running:
                     break
                     
                 cur_time = source.current_time
-                self.frame_ready.emit(frame.copy(), cur_time)
+                self.frame_ready.emit(frame, cur_time)
                 
-                elapsed = time.perf_counter() - t0
-                sleep_time = max(0.001, self.frame_delay - elapsed)
-                time.sleep(sleep_time)
+                # 計算與系統 Master Clock 的精準時間差
+                expected_elapsed = cur_time - start_pts
+                actual_elapsed = time.perf_counter() - start_wall
+                delay_needed = expected_elapsed - actual_elapsed
+                
+                if delay_needed > 0.002:
+                    time.sleep(delay_needed)
                 
             source.close()
         except Exception:
@@ -540,7 +547,14 @@ class MainWindow(QMainWindow):
             current_time,
             is_speech_active=is_speech
         )
-        self._update_timeline_state()
+        
+        # 效能極限優化：播放中僅刷新指針與時間碼，每 200ms 節流刷新全量狀態
+        now = time.perf_counter()
+        if not hasattr(self, "_last_timeline_full_update") or (now - self._last_timeline_full_update > 0.2):
+            self._last_timeline_full_update = now
+            self._update_timeline_state()
+        else:
+            self.timeline.update_time_display(current_time)
 
     @Slot()
     def _on_worker_finished(self):
