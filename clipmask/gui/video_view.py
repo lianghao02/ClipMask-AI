@@ -49,7 +49,7 @@ class VideoGraphicsView(QGraphicsView):
         self.scene.setSceneRect(0, 0, width, height)
         self.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
-    def update_frame_data(self, frame_rgb: np.ndarray, tracks: List[Track], subtitles: List[SubtitleItem], current_time: float):
+    def update_frame_data(self, frame_rgb: np.ndarray, tracks: List[Track], subtitles: List[SubtitleItem], current_time: float, live_typing_text: str = ""):
         orig_h, orig_w = frame_rgb.shape[:2]
         if self.video_w != orig_w or self.video_h != orig_h:
             self.set_video_dimensions(orig_w, orig_h)
@@ -62,11 +62,13 @@ class VideoGraphicsView(QGraphicsView):
             for track, rect in evaluated:
                 display_rgb = RenderExporter.apply_mosaic_or_blur(display_rgb, rect, track.mask.style, track.mask.strength)
 
-        # 2. 應用聽打字幕
-        if subtitles:
-            sub_text = SubtitleManager.get_active_subtitle_at(subtitles, current_time)
-            if sub_text:
-                display_rgb = SubtitleManager.draw_subtitle_on_image(display_rgb, sub_text)
+        # 2. 應用聽打字幕 (優先顯示正在即時輸入的文字，若無則依時間點抓取已記錄的字幕)
+        target_sub_text = live_typing_text.strip() if live_typing_text.strip() else None
+        if not target_sub_text and subtitles:
+            target_sub_text = SubtitleManager.get_active_subtitle_at(subtitles, current_time)
+
+        if target_sub_text:
+            display_rgb = SubtitleManager.draw_subtitle_on_image(display_rgb, target_sub_text)
 
         bytes_per_line = 3 * orig_w
         qimg = QImage(display_rgb.data, orig_w, orig_h, bytes_per_line, QImage.Format.Format_RGB888)

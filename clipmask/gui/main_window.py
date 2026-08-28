@@ -262,10 +262,11 @@ class MainWindow(QMainWindow):
         grp_subs = QGroupBox("🎙️ 即時聽打字幕 (Transcribe)")
         sub_layout = QVBoxLayout(grp_subs)
 
-        # 聽打輸入列 (Enter 送出)
+        # 聽打輸入列 (Enter 送出 / 打字即時顯示)
         row_input = QHBoxLayout()
         self.edit_sub_text = QLineEdit()
         self.edit_sub_text.setPlaceholderText("聽打這句話... (按 Enter 立即打點新增)")
+        self.edit_sub_text.textChanged.connect(self._on_sub_typing_changed)
         self.edit_sub_text.returnPressed.connect(self._add_current_transcribe)
         row_input.addWidget(self.edit_sub_text)
 
@@ -644,6 +645,16 @@ class MainWindow(QMainWindow):
                 self.video_view.update_frame_data(self.current_frame_rgb, self.project.tracks, self.project.subtitles, self.video_source.current_time)
 
     # ──── 即時聽打字幕系統 ────
+    def _on_sub_typing_changed(self, text: str):
+        if self.current_frame_rgb is not None and self.video_source:
+            self.video_view.update_frame_data(
+                self.current_frame_rgb,
+                self.project.tracks,
+                self.project.subtitles,
+                self.video_source.current_time,
+                live_typing_text=text
+            )
+
     def _add_current_transcribe(self):
         if not self.video_source:
             return
@@ -659,8 +670,19 @@ class MainWindow(QMainWindow):
         self.project.subtitles.append(item)
         self.project.subtitles.sort(key=lambda s: s.start_sec)
         
+        self.edit_sub_text.blockSignals(True)
         self.edit_sub_text.clear()
+        self.edit_sub_text.blockSignals(False)
+        
         self._refresh_sub_list()
+        # 強制重繪當前幀，確保字幕立刻固化顯示在畫布上
+        if self.current_frame_rgb is not None:
+            self.video_view.update_frame_data(
+                self.current_frame_rgb,
+                self.project.tracks,
+                self.project.subtitles,
+                cur_t
+            )
         self.seek_to(cur_t)
 
     def _refresh_sub_list(self):
