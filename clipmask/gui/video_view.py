@@ -1,10 +1,11 @@
 ﻿"""
-ClipMask-AI Video Graphics View (支援滑鼠滾輪逐格微調與即時馬賽克預覽)
+ClipMask-AI Video Graphics View (支援畫布直接拖曳開檔)
 """
 from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsRectItem, QGraphicsPixmapItem
-from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QBrush, QWheelEvent
+from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QBrush, QWheelEvent, QDragEnterEvent, QDropEvent
 from PySide6.QtCore import Qt, QRectF, Signal, QPointF
 from typing import Optional, Tuple, List
+import os
 import cv2
 import numpy as np
 from ..models.project import Track
@@ -13,10 +14,12 @@ from ..export.exporter import RenderExporter
 
 class VideoGraphicsView(QGraphicsView):
     rect_drawn = Signal(int, int, int, int)
-    wheel_stepped = Signal(int)  # delta 幀數 (例如 +1, -1, +5, -5)
+    wheel_stepped = Signal(int)
+    file_dropped = Signal(str)  # 畫布拖入影片路徑信號
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setAcceptDrops(True)  # 啟用畫布直接拖曳接收
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
         
@@ -32,7 +35,7 @@ class VideoGraphicsView(QGraphicsView):
         
         self.video_w = 0
         self.video_h = 0
-        self.show_real_mask_preview = False  # 是否開啟真實馬賽克預覽
+        self.show_real_mask_preview = False
         
         self.is_drawing = False
         self.draw_start_pt = QPointF()
@@ -50,7 +53,6 @@ class VideoGraphicsView(QGraphicsView):
         if self.video_w != orig_w or self.video_h != orig_h:
             self.set_video_dimensions(orig_w, orig_h)
 
-        # 若開啟即時馬賽克預覽，先在影像陣列上套用馬賽克
         display_rgb = frame_rgb.copy()
         evaluated = TrackEvaluator.evaluate_all_tracks_at(tracks, current_time, self.video_w, self.video_h)
         
@@ -58,12 +60,10 @@ class VideoGraphicsView(QGraphicsView):
             for track, rect in evaluated:
                 display_rgb = RenderExporter.apply_mosaic_or_blur(display_rgb, rect, track.mask.style, track.mask.strength)
 
-        # 顯示底圖
         bytes_per_line = 3 * orig_w
         qimg = QImage(display_rgb.data, orig_w, orig_h, bytes_per_line, QImage.Format.Format_RGB888)
         self.pixmap_item.setPixmap(QPixmap.fromImage(qimg))
         
-        # 更新編輯輔助框 (若開啟真實預覽則不顯示外框，保持畫面乾淨)
         for item in self.mask_items:
             self.scene.removeItem(item)
         self.mask_items.clear()
@@ -78,11 +78,36 @@ class VideoGraphicsView(QGraphicsView):
                 self.scene.addItem(rect_item)
                 self.mask_items.append(rect_item)
 
-    # ──── 滑鼠滾輪逐格微調 ────
+    # ──── 畫布拖曳開檔 ────
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                ext = os.path.splitext(url.toLocalFile())[1].lower()
+                if ext in [".mp4", ".mkv", ".mov", ".avi", ".ts", ".wmv", ".flv", ".webm", ".m4v"]:
+                    event.acceptProposedAction()
+                    return
+        super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            return
+        super().dragMoveEvent(event)
+
+    def dropEvent(self, event: QDropEvent):
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                fpath = url.toLocalFile()
+                ext = os.path.splitext(fpath)[1].lower()
+                if ext in [".mp4", ".mkv", ".mov", ".avi", ".ts", ".wmv", ".flv", ".webm", ".m4v"]:
+                    self.file_dropped.emit(fpath)
+                    event.acceptProposedAction()
+                    return
+        super().dropEvent(event)
+
     def wheelEvent(self, event: QWheelEvent):
         delta = event.angleDelta().y()
         if delta != 0:
-            # 若按住 Shift 則快進/快退 5 幀，否則逐格 1 幀
             step = 5 if event.modifiers() & Qt.KeyboardModifier.ShiftModifier else 1
             direction = 1 if delta > 0 else -1
             self.wheel_stepped.emit(direction * step)
@@ -95,7 +120,6 @@ class VideoGraphicsView(QGraphicsView):
         if self.scene.sceneRect().isValid() and self.video_w > 0:
             self.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
-    # ──── 滑鼠拉框 ────
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and self.video_w > 0:
             scene_pos = self.mapToScene(event.pos())

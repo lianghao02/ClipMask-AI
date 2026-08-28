@@ -1,5 +1,5 @@
 ﻿"""
-ClipMask-AI Main Window (支援拖曳開檔 Drag & Drop 完整版)
+ClipMask-AI Main Window (強化拖曳開檔與錯誤回報版)
 """
 import sys
 import os
@@ -128,7 +128,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("ClipMask-AI — 智慧影音去識別化手帳工作站")
         self.resize(1380, 880)
         self.setStyleSheet(MORANDI_JOURNAL_QSS)
-        self.setAcceptDrops(True)  # 啟用全視窗拖曳開檔
+        self.setAcceptDrops(True)
         
         self.project = ProjectState()
         self.video_source: VideoSource = None
@@ -186,10 +186,11 @@ class MainWindow(QMainWindow):
         top_bar.addStretch()
         left_layout.addLayout(top_bar)
 
-        # 視訊畫面檢視
+        # 視訊畫面檢視 (連接畫布拖曳與滾輪微調)
         self.video_view = VideoGraphicsView()
         self.video_view.rect_drawn.connect(self._on_user_drawn_rect)
         self.video_view.wheel_stepped.connect(self.step_frame)
+        self.video_view.file_dropped.connect(self.load_video_path)
         left_layout.addWidget(self.video_view, stretch=1)
 
         # 專業手帳時間軸控制器
@@ -281,7 +282,7 @@ class MainWindow(QMainWindow):
 
         main_layout.addWidget(splitter)
 
-    # ──── 拖曳開檔 (Drag & Drop) ────
+    # ──── 全視窗拖曳開檔 ────
     def dragEnterEvent(self, event: QDragEnterEvent):
         if event.mimeData().hasUrls():
             for url in event.mimeData().urls():
@@ -291,14 +292,21 @@ class MainWindow(QMainWindow):
                     return
         super().dragEnterEvent(event)
 
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            return
+        super().dragMoveEvent(event)
+
     def dropEvent(self, event: QDropEvent):
-        for url in event.mimeData().urls():
-            file_path = url.toLocalFile()
-            ext = os.path.splitext(file_path)[1].lower()
-            if ext in [".mp4", ".mkv", ".mov", ".avi", ".ts", ".wmv", ".flv", ".webm", ".m4v"]:
-                self.load_video_path(file_path)
-                event.acceptProposedAction()
-                return
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                fpath = url.toLocalFile()
+                ext = os.path.splitext(fpath)[1].lower()
+                if ext in [".mp4", ".mkv", ".mov", ".avi", ".ts", ".wmv", ".flv", ".webm", ".m4v"]:
+                    self.load_video_path(fpath)
+                    event.acceptProposedAction()
+                    return
         super().dropEvent(event)
 
     def setup_shortcuts(self):
@@ -330,24 +338,32 @@ class MainWindow(QMainWindow):
             self.video_view.update_frame_data(self.current_frame_rgb, self.project.tracks, self.video_source.current_time)
 
     def open_video(self):
-        path, _ = QFileDialog.getOpenFileName(self, "選擇影片", "", "Video Files (*.mp4 *.mkv *.mov *.avi *.ts *.wmv *.webm)")
+        path, _ = QFileDialog.getOpenFileName(self, "選擇影片", "", "Video Files (*.mp4 *.mkv *.mov *.avi *.ts *.wmv *.webm *.flv *.m4v)")
         if path:
             self.load_video_path(path)
 
     def load_video_path(self, path: str):
         self._stop_playback()
-        if self.video_source:
-            self.video_source.close()
+        try:
+            if not os.path.exists(path):
+                QMessageBox.critical(self, "開啟失敗", f"找不到檔案：\n{path}")
+                return
+
+            if self.video_source:
+                self.video_source.close()
+                self.video_source = None
+                
+            self.video_source = VideoSource(path)
+            self.project.source = self.video_source.metadata
+            self.project.work_range = WorkRange(0.0, self.video_source.duration)
+            self.project.tracks.clear()
             
-        self.video_source = VideoSource(path)
-        self.project.source = self.video_source.metadata
-        self.project.work_range = WorkRange(0.0, self.video_source.duration)
-        self.project.tracks.clear()
-        
-        self.timeline.set_duration(self.video_source.duration)
-        self.seek_to(0.0)
-        self._refresh_track_list()
-        self.setWindowTitle(f"ClipMask-AI — {os.path.basename(path)}")
+            self.timeline.set_duration(self.video_source.duration)
+            self.seek_to(0.0)
+            self._refresh_track_list()
+            self.setWindowTitle(f"ClipMask-AI — {os.path.basename(path)}")
+        except Exception as e:
+            QMessageBox.critical(self, "載入影片失敗", f"無法解碼影片檔案：\n{path}\n\n錯誤訊息：{e}")
 
     def seek_to(self, seconds: float):
         if not self.video_source:
