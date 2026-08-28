@@ -941,11 +941,17 @@ class MainWindow(QMainWindow):
     def _refresh_sub_list(self):
         self.sub_list.blockSignals(True)
         self.sub_list.clear()
-        for idx, sub in enumerate(self.project.subtitles):
-            s_str = f"{int(sub.start_sec//60):02d}:{int(sub.start_sec%60):02d}"
-            e_str = f"{int(sub.end_sec//60):02d}:{int(sub.end_sec%60):02d}"
-            item = QListWidgetItem(f"[{s_str}~{e_str}] {sub.text}")
-            self.sub_list.addItem(item)
+        if not self.project.subtitles:
+            empty_item = QListWidgetItem("💡 尚無字幕：請在時間軸正下方打字按 Enter，即可自動建立並對齊發音！")
+            empty_item.setFlags(Qt.ItemFlag.NoItemFlags)
+            empty_item.setForeground(QColor(140, 130, 120))
+            self.sub_list.addItem(empty_item)
+        else:
+            for idx, sub in enumerate(self.project.subtitles):
+                s_str = f"{int(sub.start_sec//60):02d}:{int(sub.start_sec%60):02d}"
+                e_str = f"{int(sub.end_sec//60):02d}:{int(sub.end_sec%60):02d}"
+                item = QListWidgetItem(f"[{s_str}~{e_str}] {sub.text}")
+                self.sub_list.addItem(item)
         self.sub_list.blockSignals(False)
 
     def _on_sub_selection_changed(self, row: int):

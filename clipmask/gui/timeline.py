@@ -401,7 +401,7 @@ class TimelineWidget(QWidget):
         transcript_layout = QHBoxLayout()
         transcript_layout.addWidget(QLabel("🎙 聽打："))
         self.edit_transcript = QLineEdit()
-        self.edit_transcript.setPlaceholderText("在此輸入字幕；Enter 新增並自動對齊語音區段")
+        self.edit_transcript.setPlaceholderText("⌨️ 邊聽邊打字，按 Enter 自動建立這句字幕 (VAD 智慧磁吸)...")
         self.edit_transcript.returnPressed.connect(lambda: self.transcript_submitted.emit(self.edit_transcript.text()))
         transcript_layout.addWidget(self.edit_transcript, 1)
         btn_add = QPushButton("新增 (Enter)")
