@@ -246,6 +246,8 @@ class MainWindow(QMainWindow):
         self.timeline.toggle_keyframe_at_current.connect(self._toggle_keyframe_at_current)
         self.timeline.seek_started.connect(self._begin_timeline_scrub)
         self.timeline.transcript_submitted.connect(self._add_current_transcribe)
+        self.timeline.subtitle_selected.connect(self._on_timeline_sub_selected)
+        self.timeline.subtitle_range_adjusted.connect(self._on_timeline_sub_adjusted)
         self.edit_sub_text = self.timeline.edit_transcript
         self.edit_sub_text.textChanged.connect(self._on_sub_typing_changed)
         left_layout.addWidget(self.timeline)
@@ -273,7 +275,17 @@ class MainWindow(QMainWindow):
         self.btn_track_forward.clicked.connect(self._track_selected_forward)
         track_btn_layout.addWidget(self.btn_track_forward)
 
-        self.btn_persist_track = QPushButton("📌 常駐全段")
+        self.btn_split_track = QPushButton("✂ 截斷於此")
+        self.btn_split_track.setToolTip("在當前秒數截斷軌跡，防止人物出鏡時馬賽克漂移")
+        self.btn_split_track.clicked.connect(self._split_selected_track)
+        track_btn_layout.addWidget(self.btn_split_track)
+
+        self.btn_merge_track = QPushButton("🔗 合併上條")
+        self.btn_merge_track.setToolTip("將選取的軌跡與前一條軌跡合併為同一個人物")
+        self.btn_merge_track.clicked.connect(self._merge_with_previous_track)
+        track_btn_layout.addWidget(self.btn_merge_track)
+
+        self.btn_persist_track = QPushButton("📌 常駐")
         self.btn_persist_track.setToolTip("將此遮蔽框鎖定並延伸至整個工作區間 (適合固定站位/背景人物)")
         self.btn_persist_track.clicked.connect(self._persist_selected_track)
         track_btn_layout.addWidget(self.btn_persist_track)
@@ -570,12 +582,49 @@ class MainWindow(QMainWindow):
         selected_sub = self._selected_subtitle()
         selected_sub_id = selected_sub.id if selected_sub else -1
             
+        # 計算未覆蓋安全警示區間
+        uncovered_ranges = []
+        if in_t < out_t:
+            if not self.project.tracks:
+                uncovered_ranges.append((in_t, out_t))
+            else:
+                # 簡單計算所有軌跡聯集的覆蓋範圍
+                cov_min = min(t.keyframes[0].time for t in self.project.tracks if t.keyframes) if any(t.keyframes for t in self.project.tracks) else in_t
+                cov_max = max(t.keyframes[-1].time for t in self.project.tracks if t.keyframes) if any(t.keyframes for t in self.project.tracks) else in_t
+                if in_t < cov_min:
+                    uncovered_ranges.append((in_t, cov_min))
+                if cov_max < out_t:
+                    uncovered_ranges.append((cov_max, out_t))
+
         self.timeline.update_state(
             cur_t, in_t, out_t, kf_times,
             speech_segments=self.speech_segments,
             subtitles=self.project.subtitles,
-            selected_sub_id=selected_sub_id
+            selected_sub_id=selected_sub_id,
+            uncovered_ranges=uncovered_ranges
         )
+
+    def _on_timeline_sub_selected(self, sub_id: int):
+        """時間軸直接點選字幕色塊"""
+        for idx, sub in enumerate(self.project.subtitles):
+            if sub.id == sub_id:
+                self.sub_list.setCurrentRow(idx)
+                break
+
+    def _on_timeline_sub_adjusted(self, sub_id: int, new_start: float, new_end: float):
+        """時間軸拖曳字幕色塊手柄微調起訖"""
+        for idx, sub in enumerate(self.project.subtitles):
+            if sub.id == sub_id:
+                sub.start_sec = new_start
+                sub.end_sec = new_end
+                self._refresh_sub_list()
+                self.sub_list.blockSignals(True)
+                self.sub_list.setCurrentRow(idx)
+                self.sub_list.blockSignals(False)
+                self._update_edit_context()
+                if self.current_frame_rgb is not None and self.video_source:
+                    self.video_view.update_frame_data(self.current_frame_rgb, self.project.tracks, self.project.subtitles, self.video_source.current_time)
+                break
 
     def _on_user_drawn_rect(self, x: int, y: int, w: int, h: int):
         if not self.video_source:
@@ -609,6 +658,52 @@ class MainWindow(QMainWindow):
         if self.current_frame_rgb is not None and self.video_source:
             self.video_view.update_frame_data(self.current_frame_rgb, self.project.tracks, self.project.subtitles, cur_t)
 
+    def _split_selected_track(self):
+        """在當前秒數截斷選取的軌跡 (防鏡頭切換漂移)"""
+        row = self.track_list.currentRow()
+        if not (0 <= row < len(self.project.tracks)) or not self.video_source:
+            QMessageBox.warning(self, "提示", "請先選取一個遮蔽物件。")
+            return
+            
+        track = self.project.tracks[row]
+        cur_t = self.video_source.current_time
+        
+        from ..track.evaluator import TrackEvaluator
+        evaluated = TrackEvaluator.evaluate_track_at(track, cur_t, self.video_source.width, self.video_source.height)
+        if not evaluated:
+            QMessageBox.warning(self, "提示", f"當前時間 ({cur_t:.2f}s) 不在該人物的有效範圍內，無法截斷。")
+            return
+            
+        # 移除 cur_t 之後的所有關鍵影格，並在 cur_t 設置最後一顆關鍵影格
+        track.keyframes = [kf for kf in track.keyframes if kf.time < cur_t - 0.05]
+        tb = self.video_source.time_base
+        pts = int(round(cur_t / float(tb))) if tb else 0
+        track.add_or_update_keyframe(cur_t, pts, evaluated, source="split")
+        
+        self._refresh_track_list()
+        self.seek_to(cur_t)
+        QMessageBox.information(self, "截斷成功", f"已將 [{track.label}] 截斷於 {cur_t:.2f}s，之後將不再遮蔽。")
+
+    def _merge_with_previous_track(self):
+        """將選取的軌跡與前一條軌跡合併為同一人物"""
+        row = self.track_list.currentRow()
+        if row <= 0 or not (0 <= row < len(self.project.tracks)):
+            QMessageBox.warning(self, "提示", "請選取第 2 條以上的軌跡來與前一條合併。")
+            return
+            
+        curr_track = self.project.tracks[row]
+        prev_track = self.project.tracks[row - 1]
+        
+        # 合併關鍵影格
+        for kf in curr_track.keyframes:
+            prev_track.add_or_update_keyframe(kf.time, kf.pts, kf.rect_px, kf.source)
+            
+        # 刪除目前的軌跡
+        del self.project.tracks[row]
+        self._refresh_track_list()
+        self.track_list.setCurrentRow(row - 1)
+        QMessageBox.information(self, "合併成功", f"已將 [{curr_track.label}] 成功合併至 [{prev_track.label}]！")
+
     def _persist_selected_track(self):
         """將選取的軌跡擴展為全工作區間常駐鎖定"""
         row = self.track_list.currentRow()
@@ -620,7 +715,6 @@ class MainWindow(QMainWindow):
         in_t = self.project.work_range.in_time if self.project.work_range else 0.0
         out_t = self.project.work_range.out_time if self.project.work_range else self.video_source.duration
         
-        # 取得當前秒數或最新關鍵影格位置
         from ..track.evaluator import TrackEvaluator
         cur_t = self.video_source.current_time
         evaluated = TrackEvaluator.evaluate_track_at(track, cur_t, self.video_source.width, self.video_source.height)

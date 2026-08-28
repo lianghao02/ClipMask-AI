@@ -13,6 +13,7 @@ def qapp():
 
 def test_timeline_canvas_subtitle_bars(qapp):
     canvas = TimelineTrackCanvas()
+    canvas.resize(1000, 44)
     subs = [
         SubtitleItem(id=1, start_sec=1.0, end_sec=3.0, text="第一句"),
         SubtitleItem(id=2, start_sec=4.0, end_sec=6.0, text="第二句"),
@@ -25,11 +26,19 @@ def test_timeline_canvas_subtitle_bars(qapp):
         keyframe_times=[1.5, 4.5],
         speech_segments=[],
         subtitles=subs,
-        selected_sub_id=2
+        selected_sub_id=2,
+        uncovered_ranges=[(0.0, 1.0), (6.0, 10.0)]
     )
     assert len(canvas.subtitles) == 2
     assert canvas.selected_sub_id == 2
+    assert len(canvas.uncovered_ranges) == 2
     assert canvas.time_to_x(5.0) > 0
+
+    # 測試字幕 Hit Test (x=200 處在 1.0~3.0s 區間內)
+    hit_sub, hit_mode = canvas._find_sub_hit(200, 38)
+    assert hit_sub is not None
+    assert hit_sub.id == 1
+    assert hit_mode in ("left", "right", "body")
 
 def test_timeline_edit_context_display(qapp):
     timeline = TimelineWidget()

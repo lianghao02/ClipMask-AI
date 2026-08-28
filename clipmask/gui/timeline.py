@@ -58,6 +58,8 @@ class TimelineTrackCanvas(QWidget):
     range_selected = Signal(float, float)  # (in_time, out_time)
     hover_requested = Signal(float, QPoint) # (hover_time, global_pos)
     hover_leave = Signal()
+    subtitle_selected = Signal(int)  # sub_id
+    subtitle_range_adjusted = Signal(int, float, float)  # sub_id, new_start, new_end
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -71,14 +73,22 @@ class TimelineTrackCanvas(QWidget):
         self.speech_segments: list = []  # [(start_sec, end_sec), ...]
         self.subtitles: list = []  # SubtitleItem list
         self.selected_sub_id: int = -1
+        self.uncovered_ranges: list = []  # [(start_sec, end_sec), ...]
         
         # 拖拉狀態
         self.is_seeking = False
         self.is_selecting_range = False
         self.drag_start_time = 0.0
         self.temp_drag_time = 0.0
+        
+        # 字幕手柄拖拉狀態
+        self.drag_sub_mode = None  # None, "left", "right", "body"
+        self.dragging_sub_id = -1
+        self.drag_sub_orig_start = 0.0
+        self.drag_sub_orig_end = 0.0
+        self.drag_sub_anchor_time = 0.0
 
-    def update_state(self, current_time: float, duration: float, in_time: float, out_time: float, keyframe_times: List[float], speech_segments: list = None, subtitles: list = None, selected_sub_id: int = -1):
+    def update_state(self, current_time: float, duration: float, in_time: float, out_time: float, keyframe_times: List[float], speech_segments: list = None, subtitles: list = None, selected_sub_id: int = -1, uncovered_ranges: list = None):
         self.current_time = current_time
         self.duration = max(0.001, duration)
         self.in_time = in_time
@@ -89,6 +99,8 @@ class TimelineTrackCanvas(QWidget):
         if subtitles is not None:
             self.subtitles = subtitles
         self.selected_sub_id = selected_sub_id
+        if uncovered_ranges is not None:
+            self.uncovered_ranges = uncovered_ranges
         self.update()
 
     def time_to_x(self, t: float) -> float:
@@ -123,26 +135,37 @@ class TimelineTrackCanvas(QWidget):
                 seg_w = max(3.0, ex - sx)
                 painter.fillRect(QRectF(sx, 1, seg_w, 5), QColor(95, 135, 104, 210))
 
-        # 3. 繪製聽打字幕區段 (底部莫蘭迪紫丁香色條 🎙️)
+        # 3. 繪製未覆蓋安全警示細線 (頂部柔和陶土紅 ⚠️)
+        for ur_start, ur_end in self.uncovered_ranges:
+            if ur_end > ur_start:
+                ux1 = self.time_to_x(ur_start)
+                ux2 = self.time_to_x(ur_end)
+                painter.fillRect(QRectF(ux1, 0, max(2.0, ux2 - ux1), 2), QColor(215, 85, 65, 220))
+
+        # 4. 繪製聽打字幕區段 (底部莫蘭迪紫丁香色條 🎙️)
         for sub in self.subtitles:
             s_t = sub.start_sec
             e_t = sub.end_sec
             if e_t > s_t:
                 sx = self.time_to_x(s_t)
                 ex = self.time_to_x(e_t)
-                sub_w = max(4.0, ex - sx)
+                sub_w = max(5.0, ex - sx)
                 is_selected = (sub.id == self.selected_sub_id)
                 
                 if is_selected:
-                    # 選取中：高亮明亮紫粉色 + 邊框手柄
-                    painter.fillRect(QRectF(sx, h - 9, sub_w, 7), QColor(165, 135, 185, 230))
+                    # 選取中：高亮明亮紫粉色 + 左右手柄外框
+                    painter.fillRect(QRectF(sx, h - 10, sub_w, 8), QColor(165, 135, 185, 230))
                     painter.setPen(QPen(QColor(130, 95, 155, 255), 1.5))
-                    painter.drawRect(QRectF(sx, h - 9, sub_w, 7))
+                    painter.drawRect(QRectF(sx, h - 10, sub_w, 8))
+                    # 左右手柄標記 [ ]
+                    painter.setPen(QPen(QColor(255, 255, 255, 240), 2))
+                    painter.drawLine(int(sx + 1), h - 9, int(sx + 1), h - 3)
+                    painter.drawLine(int(ex - 1), h - 9, int(ex - 1), h - 3)
                 else:
                     # 一般狀態：柔和莫蘭迪灰紫色
                     painter.fillRect(QRectF(sx, h - 7, sub_w, 5), QColor(154, 144, 168, 180))
 
-        # 4. 繪製 Work Range 區間帶 (或正在拖拉中的臨時區間)
+        # 5. 繪製 Work Range 區間帶 (或正在拖拉中的臨時區間)
         display_in = self.in_time
         display_out = self.out_time
         
@@ -161,14 +184,14 @@ class TimelineTrackCanvas(QWidget):
             painter.drawLine(int(x_in), 3, int(x_in), h - 3)
             painter.drawLine(int(x_out), 3, int(x_out), h - 3)
 
-        # 5. 刻度線
+        # 6. 刻度線
         painter.setPen(QPen(QColor(198, 192, 180), 1))
         steps = 10
         for i in range(1, steps):
             sx = (w / steps) * i
             painter.drawLine(int(sx), h - 14, int(sx), h - 9)
 
-        # 4. 關鍵影格鑽石 (芥末暖黃 🔷)
+        # 7. 關鍵影格鑽石 (芥末暖黃 🔷)
         for kf_t in self.keyframe_times:
             kx = self.time_to_x(kf_t)
             ky = h / 2.0
@@ -184,7 +207,7 @@ class TimelineTrackCanvas(QWidget):
             painter.setBrush(QBrush(QColor(235, 175, 55, 230)))
             painter.drawPolygon(diamond)
 
-        # 5. 當前播放時間指針 (陶土紅)
+        # 8. 當前播放時間指針 (陶土紅)
         cx = self.time_to_x(self.current_time)
         painter.setPen(QPen(QColor(201, 122, 99, 255), 2.5))
         painter.drawLine(int(cx), 0, int(cx), h)
@@ -198,12 +221,45 @@ class TimelineTrackCanvas(QWidget):
         painter.setBrush(QBrush(QColor(201, 122, 99, 255)))
         painter.drawPolygon(tri)
 
+    def _find_sub_hit(self, pos_x: float, pos_y: float):
+        """判斷是否點擊到字幕色塊，回傳 (sub, mode: 'left'|'right'|'body'|None)"""
+        h = self.height()
+        if pos_y < h - 14:
+            return None, None
+        for sub in self.subtitles:
+            sx = self.time_to_x(sub.start_sec)
+            ex = self.time_to_x(sub.end_sec)
+            if sx - 4 <= pos_x <= ex + 4:
+                if abs(pos_x - sx) <= 5:
+                    return sub, "left"
+                elif abs(pos_x - ex) <= 5:
+                    return sub, "right"
+                else:
+                    return sub, "body"
+        return None, None
+
     def mousePressEvent(self, event: QMouseEvent):
         self.hover_leave.emit()
+        pos_x = event.position().x()
+        pos_y = event.position().y()
+
+        # 檢查是否點擊字幕色塊或拖拉左右手柄
+        if event.button() == Qt.MouseButton.LeftButton:
+            hit_sub, hit_mode = self._find_sub_hit(pos_x, pos_y)
+            if hit_sub:
+                self.drag_sub_mode = hit_mode
+                self.dragging_sub_id = hit_sub.id
+                self.drag_sub_orig_start = hit_sub.start_sec
+                self.drag_sub_orig_end = hit_sub.end_sec
+                self.drag_sub_anchor_time = self.x_to_time(pos_x)
+                self.subtitle_selected.emit(hit_sub.id)
+                self.update()
+                return
+
         # 右鍵拖拉 或 Shift+左鍵拖拉：選取剪輯區間
         if event.button() == Qt.MouseButton.RightButton or (event.button() == Qt.MouseButton.LeftButton and (event.modifiers() & Qt.KeyboardModifier.ShiftModifier)):
             self.is_selecting_range = True
-            t = self.x_to_time(event.position().x())
+            t = self.x_to_time(pos_x)
             self.drag_start_time = t
             self.temp_drag_time = t
             self.update()
@@ -211,30 +267,67 @@ class TimelineTrackCanvas(QWidget):
             # 一般左鍵：點擊/拖曳 Seek 時間指針
             self.is_seeking = True
             self.seek_started.emit()
-            t = self.x_to_time(event.position().x())
+            t = self.x_to_time(pos_x)
             self.seek_fast_requested.emit(t)
 
     def mouseMoveEvent(self, event: QMouseEvent):
+        pos_x = event.position().x()
+        pos_y = event.position().y()
+
+        # 處理字幕手柄拖曳
+        if self.drag_sub_mode and self.dragging_sub_id != -1:
+            cur_t = self.x_to_time(pos_x)
+            delta_t = cur_t - self.drag_sub_anchor_time
+            
+            if self.drag_sub_mode == "left":
+                new_start = min(self.drag_sub_orig_end - 0.2, max(0.0, self.drag_sub_orig_start + delta_t))
+                self.subtitle_range_adjusted.emit(self.dragging_sub_id, new_start, self.drag_sub_orig_end)
+            elif self.drag_sub_mode == "right":
+                new_end = max(self.drag_sub_orig_start + 0.2, min(self.duration, self.drag_sub_orig_end + delta_t))
+                self.subtitle_range_adjusted.emit(self.dragging_sub_id, self.drag_sub_orig_start, new_end)
+            elif self.drag_sub_mode == "body":
+                dur = self.drag_sub_orig_end - self.drag_sub_orig_start
+                new_start = max(0.0, min(self.duration - dur, self.drag_sub_orig_start + delta_t))
+                new_end = new_start + dur
+                self.subtitle_range_adjusted.emit(self.dragging_sub_id, new_start, new_end)
+            return
+
+        # 滑鼠游標形狀切換 (靠近字幕邊緣顯示 ↔)
+        hit_sub, hit_mode = self._find_sub_hit(pos_x, pos_y)
+        if hit_mode in ("left", "right"):
+            self.setCursor(Qt.CursorShape.SizeHorCursor)
+        elif hit_mode == "body":
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+
         if self.is_selecting_range:
             self.hover_leave.emit()
-            self.temp_drag_time = self.x_to_time(event.position().x())
+            self.temp_drag_time = self.x_to_time(pos_x)
             self.update()
         elif self.is_seeking:
             self.hover_leave.emit()
-            t = self.x_to_time(event.position().x())
+            t = self.x_to_time(pos_x)
             self.seek_fast_requested.emit(t)
         else:
             # 純懸浮 (Hover)：發送縮圖請求
             if self.duration > 0:
-                t = self.x_to_time(event.position().x())
+                t = self.x_to_time(pos_x)
                 global_pos = self.mapToGlobal(event.position().toPoint())
                 self.hover_requested.emit(t, global_pos)
 
     def leaveEvent(self, event):
         self.hover_leave.emit()
+        self.setCursor(Qt.CursorShape.ArrowCursor)
         super().leaveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
+        if self.drag_sub_mode:
+            self.drag_sub_mode = None
+            self.dragging_sub_id = -1
+            self.update()
+            return
+
         if self.is_selecting_range:
             self.is_selecting_range = False
             t_end = self.x_to_time(event.position().x())
@@ -262,6 +355,8 @@ class TimelineWidget(QWidget):
     toggle_keyframe_at_current = Signal()
     seek_started = Signal()
     transcript_submitted = Signal(str)
+    subtitle_selected = Signal(int)  # sub_id
+    subtitle_range_adjusted = Signal(int, float, float)  # sub_id, new_start, new_end
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -299,6 +394,8 @@ class TimelineWidget(QWidget):
         self.canvas.range_selected.connect(self.range_selected.emit)
         self.canvas.hover_requested.connect(self._on_canvas_hover)
         self.canvas.hover_leave.connect(self._on_canvas_leave)
+        self.canvas.subtitle_selected.connect(self.subtitle_selected.emit)
+        self.canvas.subtitle_range_adjusted.connect(self.subtitle_range_adjusted.emit)
         main_layout.addWidget(self.canvas)
 
         transcript_layout = QHBoxLayout()
@@ -420,13 +517,13 @@ class TimelineWidget(QWidget):
         self.lbl_edit_context.setText(f"目前編輯：{icon} {label}　{self._format_time(start)} ～ {self._format_time(end)}")
         self.btn_reset_range.setText(reset_text)
 
-    def update_state(self, current_time: float, in_time: float, out_time: float, keyframe_times: List[float], speech_segments: list = None, subtitles: list = None, selected_sub_id: int = -1):
+    def update_state(self, current_time: float, in_time: float, out_time: float, keyframe_times: List[float], speech_segments: list = None, subtitles: list = None, selected_sub_id: int = -1, uncovered_ranges: list = None):
         self.current_time = current_time
         self.in_time = in_time
         self.out_time = out_time if out_time > in_time else self.duration
         self.keyframe_times = keyframe_times
         
-        self.canvas.update_state(current_time, self.duration, self.in_time, self.out_time, keyframe_times, speech_segments, subtitles, selected_sub_id)
+        self.canvas.update_state(current_time, self.duration, self.in_time, self.out_time, keyframe_times, speech_segments, subtitles, selected_sub_id, uncovered_ranges)
         
         cur_str = self._format_time(self.current_time)
         dur_str = self._format_time(self.duration)
