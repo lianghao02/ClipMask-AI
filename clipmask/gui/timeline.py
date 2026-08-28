@@ -4,7 +4,7 @@ ClipMask-AI Pro Timeline Widget (支援滑鼠拖拉選取 Work Range 區間)
 - 左右點擊：精確跳轉播放時間
 """
 from PySide6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QFrame, QLineEdit
-from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QPolygonF, QMouseEvent, QImage, QPixmap
+from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QPolygonF, QMouseEvent, QWheelEvent, QImage, QPixmap
 from PySide6.QtCore import Qt, Signal, QRectF, QPointF, QPoint
 from typing import List, Optional
 from collections import OrderedDict
@@ -75,6 +75,10 @@ class TimelineTrackCanvas(QWidget):
         self.selected_sub_id: int = -1
         self.uncovered_ranges: list = []  # [(start_sec, end_sec), ...]
         
+        # 縮放與平移狀態 (剪映同款)
+        self.zoom_factor = 1.0       # 1.0x ~ 10.0x
+        self.pan_offset_t = 0.0      # 視窗最左側秒數
+        
         # 拖拉狀態
         self.is_seeking = False
         self.is_selecting_range = False
@@ -87,6 +91,41 @@ class TimelineTrackCanvas(QWidget):
         self.drag_sub_orig_start = 0.0
         self.drag_sub_orig_end = 0.0
         self.drag_sub_anchor_time = 0.0
+
+    @property
+    def visible_duration(self) -> float:
+        return max(0.001, self.duration / max(1.0, self.zoom_factor))
+
+    def _clamp_pan_offset(self):
+        max_pan = max(0.0, self.duration - self.visible_duration)
+        self.pan_offset_t = max(0.0, min(max_pan, self.pan_offset_t))
+
+    def set_zoom(self, new_factor: float, anchor_x: float = None):
+        """以指定座標或時間軸中央為錨點進行平滑縮放"""
+        if self.duration <= 0:
+            return
+        new_factor = max(1.0, min(12.0, new_factor))
+        if anchor_x is None:
+            anchor_x = self.width() / 2.0
+            
+        anchor_t = self.x_to_time(anchor_x)
+        self.zoom_factor = new_factor
+        
+        # 保持 anchor_t 在 anchor_x 像素位置不動
+        pct_x = max(0.0, min(1.0, anchor_x / max(1.0, float(self.width()))))
+        self.pan_offset_t = anchor_t - pct_x * self.visible_duration
+        self._clamp_pan_offset()
+        self.update()
+
+    def pan_by(self, delta_seconds: float):
+        self.pan_offset_t += delta_seconds
+        self._clamp_pan_offset()
+        self.update()
+
+    def reset_zoom(self):
+        self.zoom_factor = 1.0
+        self.pan_offset_t = 0.0
+        self.update()
 
     def update_state(self, current_time: float, duration: float, in_time: float, out_time: float, keyframe_times: List[float], speech_segments: list = None, subtitles: list = None, selected_sub_id: int = -1, uncovered_ranges: list = None):
         self.current_time = current_time
@@ -101,18 +140,43 @@ class TimelineTrackCanvas(QWidget):
         self.selected_sub_id = selected_sub_id
         if uncovered_ranges is not None:
             self.uncovered_ranges = uncovered_ranges
+            
+        # 播放自動滾動跟隨視窗 (Auto-follow Playhead)
+        if self.zoom_factor > 1.0:
+            if current_time > self.pan_offset_t + self.visible_duration * 0.92:
+                self.pan_offset_t = current_time - self.visible_duration * 0.2
+                self._clamp_pan_offset()
+            elif current_time < self.pan_offset_t:
+                self.pan_offset_t = current_time
+                self._clamp_pan_offset()
+                
         self.update()
 
     def time_to_x(self, t: float) -> float:
-        if self.duration <= 0:
+        if self.duration <= 0 or self.visible_duration <= 0:
             return 0.0
-        return (t / self.duration) * self.width()
+        return ((t - self.pan_offset_t) / self.visible_duration) * self.width()
 
     def x_to_time(self, x: float) -> float:
-        if self.width() <= 0:
-            return 0.0
+        if self.width() <= 0 or self.visible_duration <= 0:
+            return self.pan_offset_t
         pct = max(0.0, min(1.0, x / float(self.width())))
-        return pct * self.duration
+        return self.pan_offset_t + pct * self.visible_duration
+
+    def wheelEvent(self, event: QWheelEvent):
+        """滑鼠滾輪縮放與橫向捲動 (剪映手感)"""
+        delta = event.angleDelta().y()
+        pos_x = event.position().x()
+        
+        # 滾輪縮放 (按住 Ctrl 或直接上下滾動)
+        if (event.modifiers() & Qt.KeyboardModifier.ControlModifier) or abs(delta) >= 120:
+            zoom_step = 1.25 if delta > 0 else 0.8
+            self.set_zoom(self.zoom_factor * zoom_step, anchor_x=pos_x)
+        else:
+            # 橫向平移
+            pan_delta = -(delta / 120.0) * (self.visible_duration * 0.15)
+            self.pan_by(pan_delta)
+        event.accept()
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -502,6 +566,25 @@ class TimelineWidget(QWidget):
         self.btn_reset_range.setToolTip("重設工作區間為整部影片")
         self.btn_reset_range.clicked.connect(self.reset_range_requested.emit)
         edit_layout.addWidget(self.btn_reset_range)
+
+        # 縮放工具按鈕組 (剪映同款)
+        edit_layout.addSpacing(10)
+        self.btn_zoom_out = QPushButton("🔍 ➖")
+        self.btn_zoom_out.setToolTip("縮小時間軸檢視 (Ctrl + 滑鼠滾輪向下)")
+        self.btn_zoom_out.setFixedWidth(32)
+        self.btn_zoom_out.clicked.connect(lambda: self.canvas.set_zoom(self.canvas.zoom_factor * 0.75))
+        edit_layout.addWidget(self.btn_zoom_out)
+
+        self.btn_zoom_in = QPushButton("🔍 ➕")
+        self.btn_zoom_in.setToolTip("放大時間軸檢視，精確微調字幕 (Ctrl + 滑鼠滾輪向上)")
+        self.btn_zoom_in.setFixedWidth(32)
+        self.btn_zoom_in.clicked.connect(lambda: self.canvas.set_zoom(self.canvas.zoom_factor * 1.35))
+        edit_layout.addWidget(self.btn_zoom_in)
+
+        self.btn_zoom_fit = QPushButton("📐 全覽")
+        self.btn_zoom_fit.setToolTip("重設為全片最適總覽 (100%)")
+        self.btn_zoom_fit.clicked.connect(self.canvas.reset_zoom)
+        edit_layout.addWidget(self.btn_zoom_fit)
 
         edit_layout.addStretch()
 
