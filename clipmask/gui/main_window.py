@@ -307,21 +307,10 @@ class MainWindow(QMainWindow):
         grp_subs = QGroupBox("🎙️ 即時聽打字幕 (Transcribe)")
         sub_layout = QVBoxLayout(grp_subs)
 
-        lbl_sub_focus = QLabel("字幕輸入列位於時間軸正下方；按 Enter 新增，右側可管理已建立內容。")
+        lbl_sub_focus = QLabel("字幕輸入列位於時間軸正下方；點選字幕可由下方共用控制列或時間軸手柄微調起訖。")
         lbl_sub_focus.setWordWrap(True)
         lbl_sub_focus.setStyleSheet("color: #78716c; font-size: 11px;")
         sub_layout.addWidget(lbl_sub_focus)
-
-        # 時間點微調
-        row_sub_time = QHBoxLayout()
-        self.btn_sub_in = QPushButton("[ 設當前為起點")
-        self.btn_sub_in.clicked.connect(self._set_sub_in_point)
-        row_sub_time.addWidget(self.btn_sub_in)
-
-        self.btn_sub_out = QPushButton("設當前為終點 ]")
-        self.btn_sub_out.clicked.connect(self._set_sub_out_point)
-        row_sub_time.addWidget(self.btn_sub_out)
-        sub_layout.addLayout(row_sub_time)
 
         # 字幕清單 (點選即跳轉重聽)
         self.sub_list = QListWidget()
