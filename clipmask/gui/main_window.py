@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QSplitter, QProgressBar, QComboBox, QSpinBox,
     QLineEdit, QProgressDialog
 )
-from PySide6.QtGui import QImage, QKeySequence, QShortcut, QDragEnterEvent, QDropEvent
+from PySide6.QtGui import QImage, QKeySequence, QShortcut, QDragEnterEvent, QDropEvent, QIcon
 from PySide6.QtCore import Qt, QThread, Signal, Slot
 from .video_view import VideoGraphicsView
 from .timeline import TimelineWidget
@@ -143,6 +143,11 @@ class MainWindow(QMainWindow):
         self.resize(1380, 880)
         self.setStyleSheet(MORANDI_JOURNAL_QSS)
         self.setAcceptDrops(True)
+
+        # 設定應用程式與視窗專屬圖示
+        icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources", "icon.png")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
         
         self.project = ProjectState()
         self.video_source: VideoSource = None
