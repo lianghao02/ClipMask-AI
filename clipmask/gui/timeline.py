@@ -164,18 +164,35 @@ class TimelineTrackCanvas(QWidget):
         return self.pan_offset_t + pct * self.visible_duration
 
     def wheelEvent(self, event: QWheelEvent):
-        """滑鼠滾輪縮放與橫向捲動 (剪映手感)"""
+        """
+        時間軸滑鼠滾輪直覺手感 (剪映/Premiere 規範)：
+        1. 直接滑動滾輪：直接推動影片時間進行跳轉預覽 (Scrub Seek)
+        2. 按住 Ctrl + 滾輪：以滑鼠游標為中心平滑放大/縮小時間軸 (Zoom)
+        3. 按住 Shift + 滾輪：左右平移時間軸可見範圍 (Pan)
+        """
         delta = event.angleDelta().y()
         pos_x = event.position().x()
+        modifiers = event.modifiers()
         
-        # 滾輪縮放 (按住 Ctrl 或直接上下滾動)
-        if (event.modifiers() & Qt.KeyboardModifier.ControlModifier) or abs(delta) >= 120:
+        if modifiers & Qt.KeyboardModifier.ControlModifier:
+            # 1. Ctrl + 滾輪：縮放
             zoom_step = 1.25 if delta > 0 else 0.8
             self.set_zoom(self.zoom_factor * zoom_step, anchor_x=pos_x)
-        else:
-            # 橫向平移
+        elif modifiers & Qt.KeyboardModifier.ShiftModifier:
+            # 2. Shift + 滾輪：水平平移視野
             pan_delta = -(delta / 120.0) * (self.visible_duration * 0.15)
             self.pan_by(pan_delta)
+        else:
+            # 3. 直接滾動滾輪：直接推動影片時間 (Scrub Seek，滾輪向上前進，向下後退)
+            # 步進時間依縮放比例自適應：放大時微調更細緻 (0.05s ~ 0.5s)
+            step_sec = max(0.04, min(1.0, self.visible_duration * 0.02))
+            direction = 1.0 if delta > 0 else -1.0
+            target_t = max(0.0, min(self.duration, self.current_time + direction * step_sec))
+            
+            self.seek_started.emit()
+            self.seek_fast_requested.emit(target_t)
+            self.seek_exact_requested.emit(target_t)
+            
         event.accept()
 
     def paintEvent(self, event):
