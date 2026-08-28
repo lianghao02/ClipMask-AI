@@ -144,10 +144,19 @@ class VadWorker(QThread):
     def __init__(self, video_path: str):
         super().__init__()
         self.video_path = video_path
+        self._is_cancelled = False
+
+    def cancel(self):
+        self._is_cancelled = True
 
     def run(self):
-        segments = VoiceActivityDetector.scan_audio_speech_segments(self.video_path)
-        self.finished.emit(segments)
+        try:
+            if not self._is_cancelled:
+                segments = VoiceActivityDetector.scan_audio_speech_segments(self.video_path)
+                if not self._is_cancelled:
+                    self.finished.emit(segments)
+        except Exception:
+            pass
 
 # ── 5. 主視窗 ──
 class MainWindow(QMainWindow):
@@ -418,6 +427,20 @@ class MainWindow(QMainWindow):
 
     def load_video_path(self, path: str):
         self._stop_playback()
+        if hasattr(self, "media_player") and self.media_player:
+            self.media_player.stop()
+
+        # 安全阻斷所有背景工作執行緒，徹底避免 QThread: Destroyed 崩潰
+        for worker_name in ("playback_worker", "vad_worker", "ai_worker"):
+            w = getattr(self, worker_name, None)
+            if w and w.isRunning():
+                if hasattr(w, "cancel"):
+                    w.cancel()
+                elif hasattr(w, "stop"):
+                    w.stop()
+                w.wait(1000)
+            setattr(self, worker_name, None)
+
         try:
             if not os.path.exists(path):
                 QMessageBox.critical(self, "開啟失敗", f"找不到檔案：\n{path}")
