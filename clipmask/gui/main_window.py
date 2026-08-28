@@ -176,16 +176,18 @@ class MainWindow(QMainWindow):
 
         top_bar.addSpacing(15)
 
-        self.btn_fast_export = QPushButton("⚡ 僅剪輯所選區間 (無碼秒出)")
-        self.btn_fast_export.setToolTip("快速無損切出選取的時間區間，不改變畫質，2 秒內完成")
-        self.btn_fast_export.clicked.connect(self.export_fast_copy)
-        top_bar.addWidget(self.btn_fast_export)
-
-        self.btn_render_export = QPushButton("🛡️ 匯出馬賽克影片 (含剪輯)")
-        self.btn_render_export.setToolTip("將選取的區間連同所有 AI / 手動馬賽克一起壓制輸出去識別化影片")
+        # 核心主按鈕：匯出馬賽克去識別影片
+        self.btn_render_export = QPushButton("🛡️ 匯出馬賽克影片 (壓制遮蔽)")
+        self.btn_render_export.setToolTip("將影片連同所有 AI/手動馬賽克與聽打字幕一起壓制輸出（若有選取區間則只輸出該區間）")
         self.btn_render_export.setObjectName("btn_primary")
         self.btn_render_export.clicked.connect(self.export_render)
         top_bar.addWidget(self.btn_render_export)
+
+        # 輔助次按鈕：純剪輯無碼秒出
+        self.btn_fast_export = QPushButton("⚡ 純剪輯影片 (無馬賽克/秒出)")
+        self.btn_fast_export.setToolTip("僅無損切出選取的時間區間，不加任何馬賽克，2 秒內完成")
+        self.btn_fast_export.clicked.connect(self.export_fast_copy)
+        top_bar.addWidget(self.btn_fast_export)
 
         top_bar.addStretch()
         left_layout.addLayout(top_bar)
