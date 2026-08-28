@@ -4,6 +4,7 @@ ClipMask-AI Video Source & Seek Controller
 """
 import av
 import numpy as np
+from PIL import Image
 from typing import Optional, Tuple, Generator
 from ..models.project import SourceMetadata
 
@@ -114,3 +115,44 @@ class VideoSource:
     def close(self):
         if self.container:
             self.container.close()
+
+
+class ThumbnailExtractor:
+    """獨立輕量縮圖提取器：僅提取 160x90 關鍵影格，完全不佔用主畫面解碼線路"""
+    def __init__(self, video_path: str):
+        self.video_path = video_path
+        self.container = None
+        self.stream = None
+        self.time_base = 0.001
+        self._init_source()
+
+    def _init_source(self):
+        try:
+            self.container = av.open(self.video_path)
+            self.stream = self.container.streams.video[0]
+            self.stream.thread_type = "AUTO"
+            self.time_base = float(self.stream.time_base)
+        except Exception:
+            pass
+
+    def get_thumbnail(self, seconds: float, width: int = 160, height: int = 90) -> Optional[np.ndarray]:
+        if not self.container or not self.stream:
+            return None
+        try:
+            target_pts = int(round(seconds / self.time_base))
+            self.container.seek(target_pts, any_frame=False, backward=True, stream=self.stream)
+            for frame in self.container.decode(self.stream):
+                if frame.pts is not None:
+                    # 使用 PIL 快速降採樣縮圖
+                    pil_img = frame.to_image().resize((width, height), Image.Resampling.BILINEAR)
+                    return np.array(pil_img.convert("RGB"))
+        except Exception:
+            pass
+        return None
+
+    def close(self):
+        if self.container:
+            try:
+                self.container.close()
+            except Exception:
+                pass

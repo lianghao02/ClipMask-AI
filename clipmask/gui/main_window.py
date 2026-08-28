@@ -19,7 +19,7 @@ from .video_view import VideoGraphicsView
 from .timeline import TimelineWidget
 from .styles import MORANDI_JOURNAL_QSS
 from ..models.project import ProjectState, Track, Keyframe, MaskConfig, WorkRange
-from ..media.source import VideoSource
+from ..media.source import VideoSource, ThumbnailExtractor
 from ..track.tracker import MicroTracker
 from ..ai.detector import FaceDetector
 from ..ai.subtitles import SubtitleManager, SubtitleItem
@@ -152,6 +152,7 @@ class MainWindow(QMainWindow):
         self.ai_worker: AiDetectWorker = None
         self.export_worker: ExportWorker = None
         self.vad_worker: VadWorker = None
+        self.thumb_extractor: ThumbnailExtractor = None
         
         self.init_ui()
         self.setup_shortcuts()
@@ -405,7 +406,14 @@ class MainWindow(QMainWindow):
                 self.video_source.close()
                 self.video_source = None
                 
+            if self.thumb_extractor:
+                self.thumb_extractor.close()
+                self.thumb_extractor = None
+
             self.video_source = VideoSource(path)
+            self.thumb_extractor = ThumbnailExtractor(path)
+            self.timeline.set_thumbnail_extractor(self.thumb_extractor)
+
             self.project.source = self.video_source.metadata
             self.project.work_range = WorkRange(0.0, self.video_source.duration)
             self.project.tracks.clear()
@@ -894,4 +902,6 @@ class MainWindow(QMainWindow):
         self._stop_playback()
         if self.video_source:
             self.video_source.close()
+        if self.thumb_extractor:
+            self.thumb_extractor.close()
         super().closeEvent(event)

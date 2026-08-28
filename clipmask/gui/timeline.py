@@ -3,15 +3,58 @@ ClipMask-AI Pro Timeline Widget (支援滑鼠拖拉選取 Work Range 區間)
 - 滑鼠右鍵拖拉 / Shift+左鍵拖拉：直接拉出 Work Range 剪輯區間
 - 左右點擊：精確跳轉播放時間
 """
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel
-from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QPolygonF, QMouseEvent
-from PySide6.QtCore import Qt, Signal, QRectF, QPointF
-from typing import List
+from PySide6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QFrame
+from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QPolygonF, QMouseEvent, QImage, QPixmap
+from PySide6.QtCore import Qt, Signal, QRectF, QPointF, QPoint
+from typing import List, Optional
+import numpy as np
+
+class HoverThumbnailPopup(QFrame):
+    """時間軸懸浮小縮圖視窗 (YouTube/Premiere 模式)"""
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setFixedSize(168, 118)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(2)
+
+        # 縮圖容器
+        self.lbl_thumb = QLabel()
+        self.lbl_thumb.setFixedSize(160, 90)
+        self.lbl_thumb.setStyleSheet("background-color: #1a1a1a; border-radius: 4px;")
+        self.lbl_thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.lbl_thumb)
+
+        # 時間標籤
+        self.lbl_time = QLabel("00:00:00.000")
+        self.lbl_time.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_time.setStyleSheet("color: #ffffff; font-family: Consolas, monospace; font-size: 11px; font-weight: bold; background: rgba(0,0,0,160); border-radius: 3px; padding: 1px;")
+        layout.addWidget(self.lbl_time)
+
+    def set_content(self, rgb_frame: Optional[np.ndarray], time_str: str):
+        self.lbl_time.setText(time_str)
+        if rgb_frame is not None:
+            h, w = rgb_frame.shape[:2]
+            qimg = QImage(rgb_frame.data, w, h, 3 * w, QImage.Format.Format_RGB888)
+            self.lbl_thumb.setPixmap(QPixmap.fromImage(qimg))
+        else:
+            self.lbl_thumb.setText("載入中...")
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setBrush(QBrush(QColor(30, 32, 35, 235)))
+        painter.setPen(QPen(QColor(180, 160, 140, 180), 1))
+        painter.drawRoundedRect(0, 0, self.width(), self.height(), 6, 6)
 
 class TimelineTrackCanvas(QWidget):
     seek_requested = Signal(float)
     seek_fast_requested = Signal(float)
     range_selected = Signal(float, float)  # (in_time, out_time)
+    hover_requested = Signal(float, QPoint) # (hover_time, global_pos)
+    hover_leave = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -129,6 +172,7 @@ class TimelineTrackCanvas(QWidget):
         painter.drawPolygon(tri)
 
     def mousePressEvent(self, event: QMouseEvent):
+        self.hover_leave.emit()
         # 右鍵拖拉 或 Shift+左鍵拖拉：選取剪輯區間
         if event.button() == Qt.MouseButton.RightButton or (event.button() == Qt.MouseButton.LeftButton and (event.modifiers() & Qt.KeyboardModifier.ShiftModifier)):
             self.is_selecting_range = True
@@ -144,11 +188,23 @@ class TimelineTrackCanvas(QWidget):
 
     def mouseMoveEvent(self, event: QMouseEvent):
         if self.is_selecting_range:
+            self.hover_leave.emit()
             self.temp_drag_time = self.x_to_time(event.position().x())
             self.update()
         elif self.is_seeking:
+            self.hover_leave.emit()
             t = self.x_to_time(event.position().x())
             self.seek_fast_requested.emit(t)
+        else:
+            # 純懸浮 (Hover)：發送縮圖請求
+            if self.duration > 0:
+                t = self.x_to_time(event.position().x())
+                global_pos = self.mapToGlobal(event.position().toPoint())
+                self.hover_requested.emit(t, global_pos)
+
+    def leaveEvent(self, event):
+        self.hover_leave.emit()
+        super().leaveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         if self.is_selecting_range:
@@ -183,10 +239,14 @@ class TimelineWidget(QWidget):
         self.current_time = 0.0
         self.in_time = 0.0
         self.out_time = 0.0
-        self.keyframe_times: List[float] = []
         self.is_playing = False
+        self.thumb_extractor = None
+        self.hover_popup = HoverThumbnailPopup(self)
         
         self.init_ui()
+
+    def set_thumbnail_extractor(self, extractor):
+        self.thumb_extractor = extractor
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
@@ -203,7 +263,27 @@ class TimelineWidget(QWidget):
         self.canvas.seek_requested.connect(self.seek_requested.emit)
         self.canvas.seek_fast_requested.connect(self.seek_fast_requested.emit)
         self.canvas.range_selected.connect(self.range_selected.emit)
+        self.canvas.hover_requested.connect(self._on_canvas_hover)
+        self.canvas.hover_leave.connect(self._on_canvas_leave)
         main_layout.addWidget(self.canvas)
+
+    def _on_canvas_hover(self, hover_sec: float, global_pos: QPoint):
+        if self.is_playing or not self.thumb_extractor:
+            self.hover_popup.hide()
+            return
+            
+        time_str = self._format_time(hover_sec)
+        thumb_rgb = self.thumb_extractor.get_thumbnail(hover_sec, width=160, height=90)
+        self.hover_popup.set_content(thumb_rgb, time_str)
+        
+        # 顯示在游標正上方中央
+        popup_x = global_pos.x() - self.hover_popup.width() // 2
+        popup_y = global_pos.y() - self.hover_popup.height() - 8
+        self.hover_popup.move(popup_x, popup_y)
+        self.hover_popup.show()
+
+    def _on_canvas_leave(self):
+        self.hover_popup.hide()
 
         # 控制列
         ctrl_layout = QHBoxLayout()
