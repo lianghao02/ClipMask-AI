@@ -1,7 +1,6 @@
 ﻿"""
-ClipMask-AI Main Window (記憶體安全與穩定播放版)
-1. 傳遞深拷貝 QImage 避免跨執行緒 Dangling Pointer
-2. 簡潔穩定的背景 Worker 避免衝突
+ClipMask-AI Main Window (完整非同步版)
+包含 PlaybackWorker、AIDetectionWorker 與即時進度對話框，UI 永不卡死。
 """
 import sys
 import os
@@ -11,7 +10,8 @@ import numpy as np
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QFileDialog, QListWidget, QListWidgetItem, QLabel, QGroupBox,
-    QMessageBox, QSplitter, QProgressBar, QComboBox, QSpinBox
+    QMessageBox, QSplitter, QProgressBar, QComboBox, QSpinBox,
+    QProgressDialog
 )
 from PySide6.QtGui import QImage
 from PySide6.QtCore import Qt, QThread, Signal, Slot
@@ -25,7 +25,6 @@ from ..ai.subtitles import SubtitleManager
 from ..export.exporter import FastCopyExporter, RenderExporter
 
 class PlaybackWorker(QThread):
-    # 傳遞 QImage (安全深拷貝) 與當前秒數
     frame_ready = Signal(QImage, float, int, int)
     finished = Signal()
 
@@ -54,8 +53,6 @@ class PlaybackWorker(QThread):
                     
                 cur_time = source.current_time
                 orig_h, orig_w = frame.shape[:2]
-                
-                # 轉成 QImage 並深拷貝，徹底解決 Windows 跨執行緒記憶體回收閃退
                 bytes_per_line = 3 * orig_w
                 qimg = QImage(frame.data, orig_w, orig_h, bytes_per_line, QImage.Format.Format_RGB888).copy()
                 
@@ -71,6 +68,41 @@ class PlaybackWorker(QThread):
             
         self.finished.emit()
 
+class AIDetectionWorker(QThread):
+    progress = Signal(int, str)
+    finished = Signal(list)
+
+    def __init__(self, video_path: str, in_time: float, out_time: float):
+        super().__init__()
+        self.video_path = video_path
+        self.in_time = in_time
+        self.out_time = out_time
+        self._is_cancelled = False
+
+    def cancel(self):
+        self._is_cancelled = True
+
+    def run(self):
+        try:
+            detector = FaceDetector()
+            source = VideoSource(self.video_path)
+            
+            def on_progress(pct: int, msg: str) -> bool:
+                self.progress.emit(pct, msg)
+                return not self._is_cancelled
+
+            tracks = detector.scan_work_range(
+                source,
+                self.in_time,
+                self.out_time,
+                step_sec=0.5,
+                progress_callback=on_progress
+            )
+            source.close()
+            self.finished.emit(tracks)
+        except Exception:
+            self.finished.emit([])
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -80,8 +112,9 @@ class MainWindow(QMainWindow):
         self.project = ProjectState()
         self.video_source: VideoSource = None
         self.current_qimage = None
-        self.face_detector = None
         self.playback_worker: PlaybackWorker = None
+        self.ai_worker: AIDetectionWorker = None
+        self.progress_dialog: QProgressDialog = None
         
         self.init_ui()
 
@@ -337,30 +370,43 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "提示", "請先開啟影片。")
             return
             
-        try:
-            if not self.face_detector:
-                self.face_detector = FaceDetector()
-        except Exception as e:
-            QMessageBox.critical(self, "錯誤", f"無法載入人臉偵測模型: {e}")
-            return
-            
         in_t = self.project.work_range.in_time
         out_t = min(self.video_source.duration, self.project.work_range.out_time)
         
-        detected_tracks = self.face_detector.scan_work_range(
-            self.video_source,
-            in_t,
-            out_t,
-            step_sec=0.5
-        )
+        # 建立進度對話框
+        self.progress_dialog = QProgressDialog("正在啟動 AI 人臉偵測...", "取消", 0, 100, self)
+        self.progress_dialog.setWindowTitle("AI 人臉自動掃描中")
+        self.progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        self.progress_dialog.setMinimumDuration(0)
         
+        self.ai_worker = AIDetectionWorker(self.video_source.video_path, in_t, out_t)
+        self.ai_worker.progress.connect(self._on_ai_progress)
+        self.ai_worker.finished.connect(self._on_ai_finished)
+        self.progress_dialog.canceled.connect(self.ai_worker.cancel)
+        
+        self.ai_worker.start()
+        self.progress_dialog.show()
+
+    @Slot(int, str)
+    def _on_ai_progress(self, pct: int, msg: str):
+        if self.progress_dialog:
+            self.progress_dialog.setValue(pct)
+            self.progress_dialog.setLabelText(msg)
+
+    @Slot(list)
+    def _on_ai_finished(self, detected_tracks: list):
+        if self.progress_dialog:
+            self.progress_dialog.close()
+            self.progress_dialog = None
+            
         if detected_tracks:
             self.project.tracks.extend(detected_tracks)
             self._refresh_track_list()
+            in_t = self.project.work_range.in_time if self.project.work_range else 0.0
             self.seek_to(in_t)
             QMessageBox.information(self, "AI 偵測完成", f"共偵測到 {len(detected_tracks)} 處人臉目標！")
         else:
-            QMessageBox.information(self, "AI 偵測完成", "未偵測到明顯人臉。")
+            QMessageBox.information(self, "AI 偵測完成", "未偵測到明顯人臉或任務已取消。")
 
     def _refresh_track_list(self):
         cur_row = self.track_list.currentRow()
@@ -472,6 +518,9 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._stop_playback()
+        if self.ai_worker and self.ai_worker.isRunning():
+            self.ai_worker.cancel()
+            self.ai_worker.wait(500)
         if self.video_source:
             self.video_source.close()
         super().closeEvent(event)
