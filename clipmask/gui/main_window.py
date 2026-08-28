@@ -275,17 +275,7 @@ class MainWindow(QMainWindow):
         self.btn_track_forward.clicked.connect(self._track_selected_forward)
         track_btn_layout.addWidget(self.btn_track_forward)
 
-        self.btn_split_track = QPushButton("✂ 截斷於此")
-        self.btn_split_track.setToolTip("在當前秒數截斷軌跡，防止人物出鏡時馬賽克漂移")
-        self.btn_split_track.clicked.connect(self._split_selected_track)
-        track_btn_layout.addWidget(self.btn_split_track)
-
-        self.btn_merge_track = QPushButton("🔗 合併上條")
-        self.btn_merge_track.setToolTip("將選取的軌跡與前一條軌跡合併為同一個人物")
-        self.btn_merge_track.clicked.connect(self._merge_with_previous_track)
-        track_btn_layout.addWidget(self.btn_merge_track)
-
-        self.btn_persist_track = QPushButton("📌 常駐")
+        self.btn_persist_track = QPushButton("📌 常駐全段")
         self.btn_persist_track.setToolTip("將此遮蔽框鎖定並延伸至整個工作區間 (適合固定站位/背景人物)")
         self.btn_persist_track.clicked.connect(self._persist_selected_track)
         track_btn_layout.addWidget(self.btn_persist_track)
