@@ -1,5 +1,5 @@
 ﻿"""
-ClipMask-AI Main Window (Pro Dark Theme + Keyframe Jumper 完整版)
+ClipMask-AI Main Window (現代莫蘭迪手帳風格版)
 """
 import sys
 import os
@@ -16,7 +16,7 @@ from PySide6.QtGui import QImage, QKeySequence, QShortcut
 from PySide6.QtCore import Qt, QThread, Signal, Slot
 from .video_view import VideoGraphicsView
 from .timeline import TimelineWidget
-from .styles import DARK_THEME_QSS
+from .styles import MORANDI_JOURNAL_QSS
 from ..models.project import ProjectState, Track, Keyframe, MaskConfig, WorkRange
 from ..media.source import VideoSource
 from ..track.tracker import MicroTracker
@@ -129,9 +129,9 @@ class ExportWorker(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("ClipMask-AI — 智慧影音去識別化與離線剪輯工作站")
+        self.setWindowTitle("ClipMask-AI — 智慧影音去識別化手帳工作站")
         self.resize(1380, 880)
-        self.setStyleSheet(DARK_THEME_QSS)
+        self.setStyleSheet(MORANDI_JOURNAL_QSS)
         
         self.project = ProjectState()
         self.video_source: VideoSource = None
@@ -160,11 +160,12 @@ class MainWindow(QMainWindow):
         # 上方功能列
         top_bar = QHBoxLayout()
         self.btn_open = QPushButton("📂 開啟影片")
-        self.btn_open.setStyleSheet("font-weight: bold; padding: 6px 14px;")
+        self.btn_open.setStyleSheet("padding: 7px 16px;")
         self.btn_open.clicked.connect(self.open_video)
         top_bar.addWidget(self.btn_open)
 
-        self.btn_ai_detect = QPushButton("🤖 AI 自動偵測人臉 (YuNet)")
+        self.btn_ai_detect = QPushButton("🤖 AI 人臉追蹤偵測")
+        self.btn_ai_detect.setObjectName("btn_ai")
         self.btn_ai_detect.clicked.connect(self.run_ai_face_detection)
         top_bar.addWidget(self.btn_ai_detect)
 
@@ -174,7 +175,7 @@ class MainWindow(QMainWindow):
         self.btn_fast_export.clicked.connect(self.export_fast_copy)
         top_bar.addWidget(self.btn_fast_export)
 
-        self.btn_render_export = QPushButton("🛡️ 匯出遮蔽影片 (Single-pass)")
+        self.btn_render_export = QPushButton("🌿 匯出遮蔽影片 (Single-pass)")
         self.btn_render_export.setObjectName("btn_primary")
         self.btn_render_export.clicked.connect(self.export_render)
         top_bar.addWidget(self.btn_render_export)
@@ -187,7 +188,7 @@ class MainWindow(QMainWindow):
         self.video_view.rect_drawn.connect(self._on_user_drawn_rect)
         left_layout.addWidget(self.video_view, stretch=1)
 
-        # 專業時間軸控制器
+        # 專業手帳時間軸控制器
         self.timeline = TimelineWidget()
         self.timeline.play_toggled.connect(self._on_play_toggled)
         self.timeline.seek_requested.connect(self.seek_to)
@@ -208,7 +209,7 @@ class MainWindow(QMainWindow):
         right_layout.setSpacing(12)
 
         # 遮蔽物件清單
-        grp_tracks = QGroupBox("📋 遮蔽物件軌跡 (Tracks)")
+        grp_tracks = QGroupBox("📋 遮蔽人物與軌跡 (Tracks)")
         grp_layout = QVBoxLayout(grp_tracks)
         
         self.track_list = QListWidget()
@@ -220,15 +221,15 @@ class MainWindow(QMainWindow):
         self.btn_track_forward.clicked.connect(self._track_selected_forward)
         track_btn_layout.addWidget(self.btn_track_forward)
 
-        btn_del_track = QPushButton("🗑️ 刪除軌跡")
+        btn_del_track = QPushButton("🗑️ 刪除")
         btn_del_track.clicked.connect(self._delete_selected_track)
         track_btn_layout.addWidget(btn_del_track)
         grp_layout.addLayout(track_btn_layout)
 
         right_layout.addWidget(grp_tracks)
 
-        # 遮蔽樣式調整
-        grp_style = QGroupBox("⚙️ 樣式與參數調整")
+        # 樣式調整
+        grp_style = QGroupBox("⚙️ 遮蔽手帳樣式")
         style_layout = QVBoxLayout(grp_style)
         
         row_style = QHBoxLayout()
@@ -248,9 +249,9 @@ class MainWindow(QMainWindow):
         row_strength.addWidget(self.spin_strength)
         style_layout.addLayout(row_strength)
 
-        lbl_hint = QLabel("💡 提示：在畫面上拉框可新增遮蔽；選取軌跡後，時間軸會以黃金鑽石 (🔷) 顯示所有關鍵影格點。")
+        lbl_hint = QLabel("💡 提示：在畫面上拉框即可建立遮蔽；選取軌跡後，時間軸會以芥末黃鑽石 (🔷) 顯示關鍵影格點。")
         lbl_hint.setWordWrap(True)
-        lbl_hint.setStyleSheet("color: #64748b; font-size: 11px; margin-top: 4px;")
+        lbl_hint.setStyleSheet("color: #8c857b; font-size: 11px; margin-top: 4px;")
         style_layout.addWidget(lbl_hint)
 
         right_layout.addWidget(grp_style)
@@ -264,7 +265,7 @@ class MainWindow(QMainWindow):
         sub_layout.addWidget(self.btn_import_srt)
 
         self.lbl_sub_status = QLabel("目前無載入字幕")
-        self.lbl_sub_status.setStyleSheet("color: #64748b; font-size: 11px;")
+        self.lbl_sub_status.setStyleSheet("color: #8c857b; font-size: 11px;")
         sub_layout.addWidget(self.lbl_sub_status)
 
         right_layout.addWidget(grp_subs)
@@ -372,7 +373,6 @@ class MainWindow(QMainWindow):
         in_t = self.project.work_range.in_time if self.project.work_range else 0.0
         out_t = self.project.work_range.out_time if self.project.work_range else self.video_source.duration
         
-        # 取得當前選取 Track 的所有 Keyframe 秒數
         kf_times = []
         row = self.track_list.currentRow()
         if 0 <= row < len(self.project.tracks):
@@ -407,7 +407,6 @@ class MainWindow(QMainWindow):
                 self.video_source.height
             )
 
-    # ──── 關鍵影格跳轉與操作 ────
     def _jump_prev_keyframe(self):
         if not self.video_source:
             return
@@ -443,11 +442,9 @@ class MainWindow(QMainWindow):
         track = self.project.tracks[row]
         cur_t = self.video_source.current_time
         
-        # 若已有關鍵影格，則刪除
         if track.remove_keyframe_at(cur_t, tolerance=0.1):
             QMessageBox.information(self, "關鍵影格", f"已刪除 {cur_t:.2f}s 處的關鍵影格。")
         else:
-            # 依目前位置內插算出框並打上 Keyframe
             from ..track.evaluator import TrackEvaluator
             evaluated = TrackEvaluator.evaluate_track_at(track, cur_t, self.video_source.width, self.video_source.height)
             rect = evaluated if evaluated else (100, 100, 100, 100)

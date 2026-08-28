@@ -1,6 +1,5 @@
 ﻿"""
-ClipMask-AI Video Graphics View (穩定深拷貝版)
-使用 QImage 深拷貝直接更新 Pixmap，保證執行緒安全與不閃退。
+ClipMask-AI Video Graphics View (莫蘭迪手帳風格)
 """
 from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsRectItem, QGraphicsPixmapItem
 from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QBrush
@@ -20,7 +19,8 @@ class VideoGraphicsView(QGraphicsView):
         self.setRenderHint(QPainter.RenderHint.Antialiasing, False)
         self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
         self.setDragMode(QGraphicsView.DragMode.NoDrag)
-        self.setBackgroundBrush(QBrush(QColor(20, 20, 24)))
+        # 燕麥紙質外圍邊框底色
+        self.setBackgroundBrush(QBrush(QColor(242, 239, 233)))
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         
@@ -54,8 +54,9 @@ class VideoGraphicsView(QGraphicsView):
         evaluated = TrackEvaluator.evaluate_all_tracks_at(tracks, current_time, self.video_w, self.video_h)
         for track, (x, y, mw, mh) in evaluated:
             rect_item = QGraphicsRectItem(x, y, mw, mh)
-            pen = QPen(QColor(240, 70, 70, 240), 2, Qt.PenStyle.DashLine)
-            brush = QBrush(QColor(240, 70, 70, 80))
+            # 陶土紅虛線 + 半透明陶土紅底
+            pen = QPen(QColor(201, 102, 75, 230), 2, Qt.PenStyle.DashLine)
+            brush = QBrush(QColor(201, 102, 75, 75))
             rect_item.setPen(pen)
             rect_item.setBrush(brush)
             self.scene.addItem(rect_item)
@@ -74,8 +75,8 @@ class VideoGraphicsView(QGraphicsView):
                 self.draw_start_pt = scene_pos
                 if not self.preview_rect_item:
                     self.preview_rect_item = QGraphicsRectItem()
-                    pen = QPen(QColor(80, 180, 255, 255), 2, Qt.PenStyle.SolidLine)
-                    brush = QBrush(QColor(80, 180, 255, 60))
+                    pen = QPen(QColor(92, 124, 153, 255), 2, Qt.PenStyle.SolidLine)
+                    brush = QBrush(QColor(92, 124, 153, 60))
                     self.preview_rect_item.setPen(pen)
                     self.preview_rect_item.setBrush(brush)
                     self.scene.addItem(self.preview_rect_item)
