@@ -2,7 +2,6 @@
 ClipMask-AI Exporter (支援遮蔽 + 聽打字幕壓制)
 """
 import os
-import subprocess
 import cv2
 import numpy as np
 import av
@@ -87,7 +86,8 @@ class RenderExporter:
     def render_export(
         project: ProjectState,
         output_path: str,
-        progress_callback: Optional[Callable[[int], None]] = None
+        progress_callback: Optional[Callable[[int], None]] = None,
+        should_cancel: Optional[Callable[[], bool]] = None,
     ) -> bool:
         if not project.source:
             return False
@@ -98,6 +98,7 @@ class RenderExporter:
         total_duration = max(0.1, out_t - in_t)
 
         output_container = av.open(output_path, mode="w")
+        cancelled = False
         stream = output_container.add_stream("h264", rate=int(round(source.fps)))
         stream.width = source.width
         stream.height = source.height
@@ -108,6 +109,9 @@ class RenderExporter:
         
         frame_idx = 0
         while True:
+            if should_cancel and should_cancel():
+                cancelled = True
+                break
             frame = source.read_next_frame()
             if frame is None:
                 break
@@ -136,11 +140,20 @@ class RenderExporter:
                 pct = int(min(100, max(0, ((cur_t - in_t) / total_duration) * 100)))
                 progress_callback(pct)
 
-        for packet in stream.encode():
-            output_container.mux(packet)
+        if not cancelled:
+            for packet in stream.encode():
+                output_container.mux(packet)
 
         output_container.close()
         source.close()
+
+        if cancelled:
+            try:
+                if os.path.exists(output_path):
+                    os.remove(output_path)
+            except OSError:
+                pass
+            return False
         
         if progress_callback:
             progress_callback(100)

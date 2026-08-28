@@ -3,10 +3,12 @@ ClipMask-AI Pro Timeline Widget (支援滑鼠拖拉選取 Work Range 區間)
 - 滑鼠右鍵拖拉 / Shift+左鍵拖拉：直接拉出 Work Range 剪輯區間
 - 左右點擊：精確跳轉播放時間
 """
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QFrame
+from PySide6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QFrame, QLineEdit
 from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QPolygonF, QMouseEvent, QImage, QPixmap
 from PySide6.QtCore import Qt, Signal, QRectF, QPointF, QPoint
 from typing import List, Optional
+from collections import OrderedDict
+import time
 import numpy as np
 
 class HoverThumbnailPopup(QFrame):
@@ -50,6 +52,7 @@ class HoverThumbnailPopup(QFrame):
         painter.drawRoundedRect(0, 0, self.width(), self.height(), 6, 6)
 
 class TimelineTrackCanvas(QWidget):
+    seek_started = Signal()
     seek_requested = Signal(float)
     seek_fast_requested = Signal(float)
     range_selected = Signal(float, float)  # (in_time, out_time)
@@ -183,6 +186,7 @@ class TimelineTrackCanvas(QWidget):
         elif event.button() == Qt.MouseButton.LeftButton:
             # 一般左鍵：點擊/拖曳 Seek 時間指針
             self.is_seeking = True
+            self.seek_started.emit()
             t = self.x_to_time(event.position().x())
             self.seek_fast_requested.emit(t)
 
@@ -232,6 +236,8 @@ class TimelineWidget(QWidget):
     prev_keyframe_requested = Signal()
     next_keyframe_requested = Signal()
     toggle_keyframe_at_current = Signal()
+    seek_started = Signal()
+    transcript_submitted = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -242,11 +248,14 @@ class TimelineWidget(QWidget):
         self.is_playing = False
         self.thumb_extractor = None
         self.hover_popup = HoverThumbnailPopup(self)
+        self._thumbnail_cache = OrderedDict()
+        self._last_thumbnail_request = 0.0
         
         self.init_ui()
 
     def set_thumbnail_extractor(self, extractor):
         self.thumb_extractor = extractor
+        self._thumbnail_cache.clear()
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
@@ -261,11 +270,27 @@ class TimelineWidget(QWidget):
         # 時間軸軌道
         self.canvas = TimelineTrackCanvas()
         self.canvas.seek_requested.connect(self.seek_requested.emit)
+        self.canvas.seek_started.connect(self.seek_started.emit)
         self.canvas.seek_fast_requested.connect(self.seek_fast_requested.emit)
         self.canvas.range_selected.connect(self.range_selected.emit)
         self.canvas.hover_requested.connect(self._on_canvas_hover)
         self.canvas.hover_leave.connect(self._on_canvas_leave)
         main_layout.addWidget(self.canvas)
+
+        transcript_layout = QHBoxLayout()
+        transcript_layout.addWidget(QLabel("🎙 聽打："))
+        self.edit_transcript = QLineEdit()
+        self.edit_transcript.setPlaceholderText("在此輸入字幕；Enter 新增並自動對齊語音區段")
+        self.edit_transcript.returnPressed.connect(lambda: self.transcript_submitted.emit(self.edit_transcript.text()))
+        transcript_layout.addWidget(self.edit_transcript, 1)
+        btn_add = QPushButton("新增 (Enter)")
+        btn_add.clicked.connect(lambda: self.transcript_submitted.emit(self.edit_transcript.text()))
+        transcript_layout.addWidget(btn_add)
+        main_layout.addLayout(transcript_layout)
+
+        self.lbl_edit_context = QLabel("目前編輯：✂ 影片工作區間")
+        self.lbl_edit_context.setStyleSheet("font-weight: 600; color: #4a6882; padding: 2px 4px;")
+        main_layout.addWidget(self.lbl_edit_context)
 
         # 控制列
         ctrl_layout = QHBoxLayout()
@@ -286,57 +311,70 @@ class TimelineWidget(QWidget):
         self.btn_step_fwd.clicked.connect(lambda: self.step_requested.emit(1))
         ctrl_layout.addWidget(self.btn_step_fwd)
 
-        ctrl_layout.addSpacing(10)
+        main_layout.addLayout(ctrl_layout)
+
+        edit_layout = QHBoxLayout()
+        edit_layout.setSpacing(6)
 
         # 關鍵影格導航
         self.btn_prev_kf = QPushButton("⏮ 上個 🔷")
         self.btn_prev_kf.setToolTip("跳至上一個關鍵影格 ([)")
         self.btn_prev_kf.clicked.connect(self.prev_keyframe_requested.emit)
-        ctrl_layout.addWidget(self.btn_prev_kf)
+        edit_layout.addWidget(self.btn_prev_kf)
 
         self.btn_toggle_kf = QPushButton("🔷 標記影格")
         self.btn_toggle_kf.setToolTip("在當前秒數新增或刪除關鍵影格 (K)")
         self.btn_toggle_kf.setStyleSheet("color: #b45309; font-weight: bold;")
         self.btn_toggle_kf.clicked.connect(self.toggle_keyframe_at_current.emit)
-        ctrl_layout.addWidget(self.btn_toggle_kf)
+        edit_layout.addWidget(self.btn_toggle_kf)
 
         self.btn_next_kf = QPushButton("🔷 下個 ⏭")
         self.btn_next_kf.setToolTip("跳至下一個關鍵影格 (])")
         self.btn_next_kf.clicked.connect(self.next_keyframe_requested.emit)
-        ctrl_layout.addWidget(self.btn_next_kf)
+        edit_layout.addWidget(self.btn_next_kf)
 
-        ctrl_layout.addSpacing(10)
+        edit_layout.addSpacing(10)
 
         # Work Range 手動按鈕
-        self.btn_in = QPushButton("[ 起點 (I)")
+        self.btn_in = QPushButton("設起點 (I)")
         self.btn_in.clicked.connect(self.set_in_point.emit)
-        ctrl_layout.addWidget(self.btn_in)
+        edit_layout.addWidget(self.btn_in)
 
-        self.btn_out = QPushButton("終點 (O) ]")
+        self.btn_out = QPushButton("設終點 (O)")
         self.btn_out.clicked.connect(self.set_out_point.emit)
-        ctrl_layout.addWidget(self.btn_out)
+        edit_layout.addWidget(self.btn_out)
 
-        self.btn_reset_range = QPushButton("🔄 全片")
+        self.btn_reset_range = QPushButton("🔄 重設")
         self.btn_reset_range.setToolTip("重設工作區間為整部影片")
         self.btn_reset_range.clicked.connect(self.reset_range_requested.emit)
-        ctrl_layout.addWidget(self.btn_reset_range)
+        edit_layout.addWidget(self.btn_reset_range)
 
-        ctrl_layout.addStretch()
+        edit_layout.addStretch()
 
         # 時間碼顯示
         self.lbl_time = QLabel("00:00:00.000 / 00:00:00.000")
         self.lbl_time.setStyleSheet("font-family: Consolas, monospace; font-size: 13px; font-weight: bold; color: #4a6882;")
-        ctrl_layout.addWidget(self.lbl_time)
+        edit_layout.addWidget(self.lbl_time)
 
-        main_layout.addLayout(ctrl_layout)
+        main_layout.addLayout(edit_layout)
 
     def _on_canvas_hover(self, hover_sec: float, global_pos: QPoint):
         if self.is_playing or not self.thumb_extractor:
             self.hover_popup.hide()
             return
             
-        time_str = self._format_time(hover_sec)
-        thumb_rgb = self.thumb_extractor.get_thumbnail(hover_sec, width=160, height=90)
+        cache_key = round(hover_sec * 4) / 4
+        thumb_rgb = self._thumbnail_cache.get(cache_key)
+        if thumb_rgb is None:
+            if time.monotonic() - self._last_thumbnail_request < 0.12:
+                return
+            self._last_thumbnail_request = time.monotonic()
+            thumb_rgb = self.thumb_extractor.get_thumbnail(cache_key, width=160, height=90)
+            if thumb_rgb is not None:
+                self._thumbnail_cache[cache_key] = thumb_rgb
+                if len(self._thumbnail_cache) > 64:
+                    self._thumbnail_cache.popitem(last=False)
+        time_str = self._format_time(cache_key)
         self.hover_popup.set_content(thumb_rgb, time_str)
         
         # 顯示在游標正上方中央
@@ -353,6 +391,10 @@ class TimelineWidget(QWidget):
         self.in_time = 0.0
         self.out_time = duration
         self.update_state(0.0, self.in_time, self.out_time, [])
+
+    def set_edit_context(self, icon: str, label: str, start: float, end: float, reset_text: str):
+        self.lbl_edit_context.setText(f"目前編輯：{icon} {label}　{self._format_time(start)} ～ {self._format_time(end)}")
+        self.btn_reset_range.setText(reset_text)
 
     def update_state(self, current_time: float, in_time: float, out_time: float, keyframe_times: List[float], speech_segments: list = None):
         self.current_time = current_time

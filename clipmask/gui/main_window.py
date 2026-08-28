@@ -21,6 +21,7 @@ from .styles import MORANDI_JOURNAL_QSS
 from ..models.project import ProjectState, Track, Keyframe, MaskConfig, WorkRange
 from ..media.source import VideoSource, ThumbnailExtractor
 from ..track.tracker import MicroTracker
+from ..track.coverage import CoverageAnalyzer
 from ..ai.detector import FaceDetector
 from ..ai.subtitles import SubtitleManager, SubtitleItem
 from ..ai.vad import VoiceActivityDetector, SpeechSegment
@@ -108,6 +109,10 @@ class ExportWorker(QThread):
         super().__init__()
         self.project = project
         self.output_path = output_path
+        self._is_cancelled = False
+
+    def cancel(self):
+        self._is_cancelled = True
 
     def run(self):
         try:
@@ -117,7 +122,8 @@ class ExportWorker(QThread):
             success = RenderExporter.render_export(
                 self.project,
                 self.output_path,
-                progress_callback=on_progress
+                progress_callback=on_progress,
+                should_cancel=lambda: self._is_cancelled
             )
             self.finished.emit(success, self.output_path)
         except Exception as e:
@@ -161,6 +167,7 @@ class MainWindow(QMainWindow):
         
         self.init_ui()
         self.setup_shortcuts()
+        self._update_action_state()
 
     def init_ui(self):
         central = QWidget(self)
@@ -205,13 +212,17 @@ class MainWindow(QMainWindow):
         top_bar.addWidget(self.btn_render_export)
 
         # 輔助次按鈕：純剪輯無碼秒出
-        self.btn_fast_export = QPushButton("⚡ 純剪輯影片 (無馬賽克/秒出)")
-        self.btn_fast_export.setToolTip("僅無損切出選取的時間區間，不加任何馬賽克，2 秒內完成")
+        self.btn_fast_export = QPushButton("⚡ 快速串流剪輯 (不套用遮蔽)")
+        self.btn_fast_export.setToolTip("直接複製串流，不套用遮蔽或字幕；起點可能回退到前一個關鍵影格")
         self.btn_fast_export.clicked.connect(self.export_fast_copy)
         top_bar.addWidget(self.btn_fast_export)
 
         top_bar.addStretch()
         left_layout.addLayout(top_bar)
+
+        self.lbl_safety_status = QLabel("⚪ 請先載入影片，再建立或檢查遮蔽軌跡。")
+        self.lbl_safety_status.setWordWrap(True)
+        left_layout.addWidget(self.lbl_safety_status)
 
         # 視訊畫面檢視
         self.video_view = VideoGraphicsView()
@@ -226,13 +237,17 @@ class MainWindow(QMainWindow):
         self.timeline.seek_requested.connect(self.seek_to)
         self.timeline.seek_fast_requested.connect(self.seek_to_fast)
         self.timeline.step_requested.connect(self.step_frame)
-        self.timeline.set_in_point.connect(self._set_in_point)
-        self.timeline.set_out_point.connect(self._set_out_point)
-        self.timeline.reset_range_requested.connect(self._reset_work_range)
+        self.timeline.set_in_point.connect(self._set_context_in)
+        self.timeline.set_out_point.connect(self._set_context_out)
+        self.timeline.reset_range_requested.connect(self._reset_context_range)
         self.timeline.range_selected.connect(self._on_range_drag_selected)
         self.timeline.prev_keyframe_requested.connect(self._jump_prev_keyframe)
         self.timeline.next_keyframe_requested.connect(self._jump_next_keyframe)
         self.timeline.toggle_keyframe_at_current.connect(self._toggle_keyframe_at_current)
+        self.timeline.seek_started.connect(self._begin_timeline_scrub)
+        self.timeline.transcript_submitted.connect(self._add_current_transcribe)
+        self.edit_sub_text = self.timeline.edit_transcript
+        self.edit_sub_text.textChanged.connect(self._on_sub_typing_changed)
         left_layout.addWidget(self.timeline)
 
         splitter.addWidget(left_widget)
@@ -290,19 +305,10 @@ class MainWindow(QMainWindow):
         grp_subs = QGroupBox("🎙️ 即時聽打字幕 (Transcribe)")
         sub_layout = QVBoxLayout(grp_subs)
 
-        # 聽打輸入列 (Enter 送出 / 打字即時顯示)
-        row_input = QHBoxLayout()
-        self.edit_sub_text = QLineEdit()
-        self.edit_sub_text.setPlaceholderText("聽打這句話... (按 Enter 立即打點新增)")
-        self.edit_sub_text.textChanged.connect(self._on_sub_typing_changed)
-        self.edit_sub_text.returnPressed.connect(self._add_current_transcribe)
-        row_input.addWidget(self.edit_sub_text)
-
-        self.btn_add_sub = QPushButton("➕ 新增 (Enter)")
-        self.btn_add_sub.setStyleSheet("font-weight: bold; color: #5f8768;")
-        self.btn_add_sub.clicked.connect(self._add_current_transcribe)
-        row_input.addWidget(self.btn_add_sub)
-        sub_layout.addLayout(row_input)
+        lbl_sub_focus = QLabel("字幕輸入列位於時間軸正下方；按 Enter 新增，右側可管理已建立內容。")
+        lbl_sub_focus.setWordWrap(True)
+        lbl_sub_focus.setStyleSheet("color: #78716c; font-size: 11px;")
+        sub_layout.addWidget(lbl_sub_focus)
 
         # 時間點微調
         row_sub_time = QHBoxLayout()
@@ -380,8 +386,8 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence(Qt.Key.Key_Right), self, lambda: self._jump_relative_time(1.0))
         QShortcut(QKeySequence(Qt.Key.Key_Up), self, lambda: self._jump_relative_time(0.1))
         QShortcut(QKeySequence(Qt.Key.Key_Down), self, lambda: self._jump_relative_time(-0.1))
-        QShortcut(QKeySequence("I"), self, self._set_in_point)
-        QShortcut(QKeySequence("O"), self, self._set_out_point)
+        QShortcut(QKeySequence("I"), self, self._set_context_in)
+        QShortcut(QKeySequence("O"), self, self._set_context_out)
         QShortcut(QKeySequence("["), self, self._jump_prev_keyframe)
         QShortcut(QKeySequence("]"), self, self._jump_next_keyframe)
         QShortcut(QKeySequence("K"), self, self._toggle_keyframe_at_current)
@@ -435,6 +441,8 @@ class MainWindow(QMainWindow):
             self._refresh_track_list()
             self._refresh_sub_list()
             self.setWindowTitle(f"ClipMask-AI — {os.path.basename(path)}")
+            self._update_action_state()
+            self._update_safety_status()
 
             # 啟動背景人聲活動偵測 (VAD)
             self.speech_segments.clear()
@@ -481,6 +489,14 @@ class MainWindow(QMainWindow):
                 is_speech_active=is_speech
             )
             self._update_timeline_state()
+        if getattr(self, "_resume_after_scrub", False):
+            self._resume_after_scrub = False
+            self._start_playback()
+
+    def _begin_timeline_scrub(self):
+        self._resume_after_scrub = bool(self.playback_worker and self.playback_worker.isRunning())
+        if self._resume_after_scrub:
+            self._stop_playback()
 
     def step_frame(self, delta: int):
         if not self.video_source:
@@ -723,6 +739,31 @@ class MainWindow(QMainWindow):
         if 0 <= cur_row < self.track_list.count():
             self.track_list.setCurrentRow(cur_row)
         self._update_timeline_state()
+        self._update_safety_status()
+
+    def _update_action_state(self):
+        has_video = self.video_source is not None
+        for button in (self.btn_ai_detect, self.btn_toggle_preview, self.btn_render_export, self.btn_fast_export):
+            button.setEnabled(has_video)
+
+    def _update_safety_status(self):
+        if not self.video_source or not self.project.work_range:
+            return
+        report = CoverageAnalyzer.analyze(self.project.tracks, self.project.work_range.in_time, self.project.work_range.out_time)
+        if report.is_safe_to_continue:
+            self.lbl_safety_status.setText("✅ 軌道完整性檢查未發現可判定風險；仍請人工逐段看片。")
+            self.lbl_safety_status.setStyleSheet("color: #3b5941; background: #ebf2ea; padding: 6px 8px; border-radius: 6px;")
+        else:
+            self.lbl_safety_status.setText(f"⚠ 遮蔽檢查發現 {len(report.messages)} 項風險；安全壓制前需確認。")
+            self.lbl_safety_status.setStyleSheet("color: #8a3b2e; background: #f8e8e2; padding: 6px 8px; border-radius: 6px; font-weight: 600;")
+
+    def _confirm_redaction_export(self):
+        report = CoverageAnalyzer.analyze(self.project.tracks, self.project.work_range.in_time, self.project.work_range.out_time)
+        if report.is_safe_to_continue:
+            return True
+        detail = "\n".join(f"• {message}" for message in report.messages)
+        answer = QMessageBox.warning(self, "遮蔽覆蓋檢查", f"偵測到可能造成漏遮蔽的軌道風險：\n\n{detail}\n\n此檢查不能取代人工逐段看片。是否仍要繼續壓制匯出？", QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Cancel)
+        return answer == QMessageBox.StandardButton.Save
 
     def _on_track_selection_changed(self, row: int):
         if 0 <= row < len(self.project.tracks):
@@ -736,6 +777,7 @@ class MainWindow(QMainWindow):
             self.spin_strength.blockSignals(False)
             
         self._update_timeline_state()
+        self._update_edit_context()
 
     def _on_style_changed(self, index: int):
         row = self.track_list.currentRow()
@@ -770,10 +812,10 @@ class MainWindow(QMainWindow):
                 live_typing_text=text
             )
 
-    def _add_current_transcribe(self):
+    def _add_current_transcribe(self, submitted_text=None):
         if not self.video_source:
             return
-        text = self.edit_sub_text.text().strip()
+        text = (submitted_text if submitted_text is not None else self.edit_sub_text.text()).strip()
         if not text:
             return
             
@@ -796,6 +838,7 @@ class MainWindow(QMainWindow):
         self.edit_sub_text.blockSignals(True)
         self.edit_sub_text.clear()
         self.edit_sub_text.blockSignals(False)
+        self.timeline.edit_transcript.clear()
         
         self._refresh_sub_list()
         # 強制重繪當前幀，確保字幕立刻固化顯示在畫布上
@@ -822,6 +865,7 @@ class MainWindow(QMainWindow):
         if 0 <= row < len(self.project.subtitles):
             sub = self.project.subtitles[row]
             self.seek_to(sub.start_sec)
+        self._update_edit_context()
 
     def _set_sub_in_point(self):
         row = self.sub_list.currentRow()
@@ -862,10 +906,28 @@ class MainWindow(QMainWindow):
             self.project.work_range.in_time = self.video_source.current_time
             self._update_timeline_state()
 
+    def _set_context_in(self):
+        if self._selected_subtitle():
+            self._set_sub_in_point()
+        elif self._selected_track():
+            self._set_track_boundary(True)
+        else:
+            self._set_in_point()
+        self._update_edit_context()
+
     def _set_out_point(self):
         if self.video_source and self.project.work_range:
             self.project.work_range.out_time = self.video_source.current_time
             self._update_timeline_state()
+
+    def _set_context_out(self):
+        if self._selected_subtitle():
+            self._set_sub_out_point()
+        elif self._selected_track():
+            self._set_track_boundary(False)
+        else:
+            self._set_out_point()
+        self._update_edit_context()
 
     def _reset_work_range(self):
         if self.video_source and self.project.work_range:
@@ -873,12 +935,52 @@ class MainWindow(QMainWindow):
             self.project.work_range.out_time = self.video_source.duration
             self._update_timeline_state()
 
+    def _selected_subtitle(self):
+        row = self.sub_list.currentRow()
+        return self.project.subtitles[row] if 0 <= row < len(self.project.subtitles) else None
+
+    def _selected_track(self):
+        row = self.track_list.currentRow()
+        return self.project.tracks[row] if 0 <= row < len(self.project.tracks) else None
+
+    def _set_track_boundary(self, is_start):
+        track = self._selected_track()
+        if track and self.video_source and track.keyframes:
+            target = track.keyframes[0] if is_start else track.keyframes[-1]
+            target.time = self.video_source.current_time
+            track.keyframes.sort(key=lambda item: item.time)
+            self._refresh_track_list()
+
+    def _reset_context_range(self):
+        if not self._selected_subtitle() and not self._selected_track():
+            self._reset_work_range()
+        self._update_edit_context()
+
+    def _update_edit_context(self):
+        if not self.video_source:
+            return
+        sub = self._selected_subtitle()
+        if sub:
+            self.timeline.set_edit_context("🎙", f"字幕「{sub.text[:18]}」", sub.start_sec, sub.end_sec, "不適用")
+            self.timeline.btn_reset_range.setEnabled(False)
+            return
+        track = self._selected_track()
+        if track and track.keyframes:
+            self.timeline.set_edit_context("🎭", f"遮蔽「{track.label}」", track.keyframes[0].time, track.keyframes[-1].time, "不適用")
+            self.timeline.btn_reset_range.setEnabled(False)
+            return
+        work = self.project.work_range
+        if work:
+            self.timeline.set_edit_context("✂", "影片工作區間", work.in_time, work.out_time, "重設全片")
+            self.timeline.btn_reset_range.setEnabled(True)
+
     def _on_range_drag_selected(self, in_time: float, out_time: float):
         if self.video_source and self.project.work_range:
             self.project.work_range.in_time = in_time
             self.project.work_range.out_time = out_time
             self.seek_to(in_time)
             self._update_timeline_state()
+            self._update_safety_status()
 
     def _generate_default_export_name(self, mode: str = "redacted") -> str:
         if not self.video_source or not self.project.source:
@@ -903,6 +1005,9 @@ class MainWindow(QMainWindow):
         self._stop_playback()
         if not self.video_source or not self.project.source:
             return
+        answer = QMessageBox.warning(self, "快速串流剪輯", "此模式不套用任何馬賽克或字幕，且起點可能回退到前一個關鍵影格。\n\n若需要精確去識別輸出，請使用「匯出馬賽克影片」。\n\n是否繼續？", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Cancel)
+        if answer != QMessageBox.StandardButton.Yes:
+            return
             
         default_name = self._generate_default_export_name(mode="fast")
         out_path, _ = QFileDialog.getSaveFileName(self, "儲存剪輯影片 (無馬賽克)", default_name, "MP4 Files (*.mp4)")
@@ -921,6 +1026,8 @@ class MainWindow(QMainWindow):
         self._stop_playback()
         if not self.video_source or not self.project.source:
             return
+        if not self._confirm_redaction_export():
+            return
             
         default_name = self._generate_default_export_name(mode="redacted")
         out_path, _ = QFileDialog.getSaveFileName(self, "儲存馬賽克去識別影片", default_name, "MP4 Files (*.mp4)")
@@ -935,12 +1042,14 @@ class MainWindow(QMainWindow):
 
         self.export_worker = ExportWorker(self.project, out_path)
         self.export_worker.progress.connect(progress_dialog.setValue)
-        progress_dialog.canceled.connect(self.export_worker.terminate)
+        progress_dialog.canceled.connect(self.export_worker.cancel)
 
         def on_export_finished(success, msg):
             progress_dialog.close()
             if success:
                 QMessageBox.information(self, "匯出成功", f"去識別化影片壓制完成！已儲存至：\n{msg}")
+            elif self.export_worker and self.export_worker._is_cancelled:
+                QMessageBox.information(self, "已取消匯出", "已安全停止壓制，並清除未完成輸出檔。")
             else:
                 QMessageBox.critical(self, "匯出失敗", f"影片壓制失敗:\n{msg}")
 
