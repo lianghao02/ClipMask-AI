@@ -1,5 +1,5 @@
 """
-ClipMask-AI Main Window (支援時間軸拖拉選取剪輯區間與即時長度提示)
+ClipMask-AI Main Window (直覺化按鈕文字與防呆提示版)
 """
 import sys
 import os
@@ -155,31 +155,34 @@ class MainWindow(QMainWindow):
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(8)
 
-        # 上方功能列
+        # 上方功能列 (極致直覺化文字)
         top_bar = QHBoxLayout()
-        self.btn_open = QPushButton("📂 開啟 / 拖曳影片")
-        self.btn_open.setToolTip("點擊選取或直接將影片檔案拖曳至視窗內")
+        self.btn_open = QPushButton("📂 開啟 / 拖入影片")
+        self.btn_open.setToolTip("點擊開啟檔案，或直接把影片檔案拖曳至視窗內")
         self.btn_open.setStyleSheet("padding: 7px 16px;")
         self.btn_open.clicked.connect(self.open_video)
         top_bar.addWidget(self.btn_open)
 
-        self.btn_ai_detect = QPushButton("🤖 AI 人臉追蹤偵測")
+        self.btn_ai_detect = QPushButton("🤖 AI 偵測區間人臉")
+        self.btn_ai_detect.setToolTip("自動偵測所選時間區間內的所有人臉並建立連續追蹤軌跡")
         self.btn_ai_detect.setObjectName("btn_ai")
         self.btn_ai_detect.clicked.connect(self.run_ai_face_detection)
         top_bar.addWidget(self.btn_ai_detect)
 
-        self.btn_toggle_preview = QPushButton("👁️ 即時效果預覽: 關")
-        self.btn_toggle_preview.setToolTip("切換是否直接顯示真實馬賽克/模糊效果")
+        self.btn_toggle_preview = QPushButton("👁️ 真實打碼預覽: 關")
+        self.btn_toggle_preview.setToolTip("切換是否直接在畫面顯示真實馬賽克/高斯模糊效果")
         self.btn_toggle_preview.clicked.connect(self._toggle_real_mask_preview)
         top_bar.addWidget(self.btn_toggle_preview)
 
         top_bar.addSpacing(15)
 
-        self.btn_fast_export = QPushButton("⚡ 快速無損剪輯 (Stream Copy)")
+        self.btn_fast_export = QPushButton("⚡ 僅剪輯所選區間 (無碼秒出)")
+        self.btn_fast_export.setToolTip("快速無損切出選取的時間區間，不改變畫質，2 秒內完成")
         self.btn_fast_export.clicked.connect(self.export_fast_copy)
         top_bar.addWidget(self.btn_fast_export)
 
-        self.btn_render_export = QPushButton("🌿 匯出遮蔽影片 (Single-pass)")
+        self.btn_render_export = QPushButton("🛡️ 匯出馬賽克影片 (含剪輯)")
+        self.btn_render_export.setToolTip("將選取的區間連同所有 AI / 手動馬賽克一起壓制輸出去識別化影片")
         self.btn_render_export.setObjectName("btn_primary")
         self.btn_render_export.clicked.connect(self.export_render)
         top_bar.addWidget(self.btn_render_export)
@@ -225,7 +228,8 @@ class MainWindow(QMainWindow):
         grp_layout.addWidget(self.track_list)
 
         track_btn_layout = QHBoxLayout()
-        self.btn_track_forward = QPushButton("🎯 向後追蹤 2 秒")
+        self.btn_track_forward = QPushButton("🎯 向後預測 2 秒")
+        self.btn_track_forward.setToolTip("使用 CSRT 追蹤演算法自動向後預測並產生關鍵影格")
         self.btn_track_forward.clicked.connect(self._track_selected_forward)
         track_btn_layout.addWidget(self.btn_track_forward)
 
@@ -257,7 +261,7 @@ class MainWindow(QMainWindow):
         row_strength.addWidget(self.spin_strength)
         style_layout.addLayout(row_strength)
 
-        lbl_hint = QLabel("💡 剪輯與操作技巧：\n• 在時間軸【右鍵拖拉】或【Shift+左鍵】: 直接框出要剪輯的區間！\n• 點「🔄 全片」可瞬間恢復全片範圍\n• 左右鍵 ← →: 跳轉 1.0 秒\n• 上下鍵 ↑ ↓: 微調 0.1 秒\n• 滾輪: 逐格微調")
+        lbl_hint = QLabel("💡 剪輯與操作指南：\n1. 【右鍵拖拉時間軸】或【Shift+左鍵】可快速選取要剪輯的區間\n2. 點「⚡ 僅剪輯所選區間」可 2 秒秒出無碼片段\n3. 點「🛡️ 匯出馬賽克影片」可將剪輯與馬賽克一次壓制完成！\n4. 隨時可點「🔄 全片」重設為整部影片")
         lbl_hint.setWordWrap(True)
         lbl_hint.setStyleSheet("color: #78716c; font-size: 11px; margin-top: 4px; line-height: 1.4;")
         style_layout.addWidget(lbl_hint)
@@ -335,7 +339,7 @@ class MainWindow(QMainWindow):
 
     def _toggle_real_mask_preview(self):
         self.video_view.show_real_mask_preview = not self.video_view.show_real_mask_preview
-        txt = "👁️ 即時效果預覽: 開" if self.video_view.show_real_mask_preview else "👁️ 即時效果預覽: 關"
+        txt = "👁️ 真實打碼預覽: 開" if self.video_view.show_real_mask_preview else "👁️ 真實打碼預覽: 關"
         self.btn_toggle_preview.setText(txt)
         if self.current_frame_rgb is not None and self.video_source:
             self.video_view.update_frame_data(self.current_frame_rgb, self.project.tracks, self.video_source.current_time)
@@ -665,7 +669,7 @@ class MainWindow(QMainWindow):
             return
             
         default_name = self._generate_default_export_name(mode="fast")
-        out_path, _ = QFileDialog.getSaveFileName(self, "儲存無損剪輯影片", default_name, "MP4 Files (*.mp4)")
+        out_path, _ = QFileDialog.getSaveFileName(self, "儲存剪輯影片 (無馬賽克)", default_name, "MP4 Files (*.mp4)")
         if not out_path:
             return
             
@@ -673,9 +677,9 @@ class MainWindow(QMainWindow):
         out_t = self.project.work_range.out_time if self.project.work_range else self.video_source.duration
         success = FastCopyExporter.export(self.project.source.path, in_t, out_t, out_path)
         if success:
-            QMessageBox.information(self, "匯出成功", f"無損剪輯完成！已儲存至：\n{out_path}")
+            QMessageBox.information(self, "匯出成功", f"剪輯完成！已儲存至：\n{out_path}")
         else:
-            QMessageBox.critical(self, "匯出失敗", "FFmpeg Stream Copy 執行失敗。")
+            QMessageBox.critical(self, "匯出失敗", "快速剪輯執行失敗。")
 
     def export_render(self):
         self._stop_playback()
@@ -683,11 +687,11 @@ class MainWindow(QMainWindow):
             return
             
         default_name = self._generate_default_export_name(mode="redacted")
-        out_path, _ = QFileDialog.getSaveFileName(self, "儲存遮蔽壓制影片", default_name, "MP4 Files (*.mp4)")
+        out_path, _ = QFileDialog.getSaveFileName(self, "儲存馬賽克去識別影片", default_name, "MP4 Files (*.mp4)")
         if not out_path:
             return
 
-        progress_dialog = QProgressDialog("正在壓制遮蔽影片，請稍候...", "取消", 0, 100, self)
+        progress_dialog = QProgressDialog("正在壓制馬賽克去識別影片，請稍候...", "取消", 0, 100, self)
         progress_dialog.setWindowTitle("影片壓制匯出中")
         progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
         progress_dialog.setAutoClose(True)
