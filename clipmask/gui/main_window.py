@@ -218,6 +218,7 @@ class MainWindow(QMainWindow):
         self.timeline = TimelineWidget()
         self.timeline.play_toggled.connect(self._on_play_toggled)
         self.timeline.seek_requested.connect(self.seek_to)
+        self.timeline.seek_fast_requested.connect(self.seek_to_fast)
         self.timeline.step_requested.connect(self.step_frame)
         self.timeline.set_in_point.connect(self._set_in_point)
         self.timeline.set_out_point.connect(self._set_out_point)
@@ -428,7 +429,25 @@ class MainWindow(QMainWindow):
         self.speech_segments = segments
         self._update_timeline_state()
 
+    def seek_to_fast(self, seconds: float):
+        """極速粗略跳轉 (滑鼠拖曳時間軸時使用，0 延遲秒刷)"""
+        if not self.video_source:
+            return
+        frame = self.video_source.seek_fast(seconds)
+        if frame is not None:
+            self.current_frame_rgb = frame
+            is_speech = VoiceActivityDetector.find_current_speech_segment(self.speech_segments, self.video_source.current_time) is not None
+            self.video_view.update_frame_data(
+                frame,
+                self.project.tracks,
+                self.project.subtitles,
+                self.video_source.current_time,
+                is_speech_active=is_speech
+            )
+            self._update_timeline_state()
+
     def seek_to(self, seconds: float):
+        """精準跳轉 (滑鼠放開或指定秒數時使用)"""
         if not self.video_source:
             return
         frame = self.video_source.seek_exact(seconds)

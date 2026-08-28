@@ -1,4 +1,4 @@
-﻿"""
+"""
 ClipMask-AI Video Source & Seek Controller
 使用 PyAV 提供幀精確解碼與三段式 Seek。
 """
@@ -51,7 +51,23 @@ class VideoSource:
     def pts_to_time(self, pts: int) -> float:
         return float(pts * self.time_base)
 
+    def seek_fast(self, target_seconds: float) -> Optional[np.ndarray]:
+        """極速粗略跳轉：直接跳至最近關鍵影格並解碼 1 幀 (用於滑鼠拖拉時流暢預覽，0 延遲)"""
+        target_pts = self.time_to_pts(target_seconds)
+        self.container.seek(target_pts, any_frame=False, backward=True, stream=self.stream)
+        self._decode_gen = self.container.decode(self.stream)
+        try:
+            for frame in self._decode_gen:
+                if frame.pts is not None:
+                    self.current_pts = frame.pts
+                    self.current_time = self.pts_to_time(frame.pts)
+                    return frame.to_ndarray(format="rgb24")
+        except Exception:
+            pass
+        return None
+
     def seek_exact(self, target_seconds: float) -> Optional[np.ndarray]:
+        """精確跳轉：跳至關鍵影格後逐幀前進至目標時間 (用於放開滑鼠時精確停格)"""
         target_pts = self.time_to_pts(target_seconds)
         self.container.seek(target_pts, any_frame=False, backward=True, stream=self.stream)
         self._decode_gen = self.container.decode(self.stream)

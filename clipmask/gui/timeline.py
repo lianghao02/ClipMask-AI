@@ -10,6 +10,7 @@ from typing import List
 
 class TimelineTrackCanvas(QWidget):
     seek_requested = Signal(float)
+    seek_fast_requested = Signal(float)
     range_selected = Signal(float, float)  # (in_time, out_time)
 
     def __init__(self, parent=None):
@@ -139,7 +140,7 @@ class TimelineTrackCanvas(QWidget):
             # 一般左鍵：點擊/拖曳 Seek 時間指針
             self.is_seeking = True
             t = self.x_to_time(event.position().x())
-            self.seek_requested.emit(t)
+            self.seek_fast_requested.emit(t)
 
     def mouseMoveEvent(self, event: QMouseEvent):
         if self.is_selecting_range:
@@ -147,7 +148,7 @@ class TimelineTrackCanvas(QWidget):
             self.update()
         elif self.is_seeking:
             t = self.x_to_time(event.position().x())
-            self.seek_requested.emit(t)
+            self.seek_fast_requested.emit(t)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         if self.is_selecting_range:
@@ -166,6 +167,7 @@ class TimelineTrackCanvas(QWidget):
 class TimelineWidget(QWidget):
     play_toggled = Signal(bool)
     seek_requested = Signal(float)
+    seek_fast_requested = Signal(float)
     step_requested = Signal(int)
     set_in_point = Signal()
     set_out_point = Signal()
@@ -199,6 +201,7 @@ class TimelineWidget(QWidget):
         # 時間軸軌道
         self.canvas = TimelineTrackCanvas()
         self.canvas.seek_requested.connect(self.seek_requested.emit)
+        self.canvas.seek_fast_requested.connect(self.seek_fast_requested.emit)
         self.canvas.range_selected.connect(self.range_selected.emit)
         main_layout.addWidget(self.canvas)
 
