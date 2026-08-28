@@ -22,7 +22,7 @@ from ..models.project import ProjectState, Track, Keyframe, MaskConfig, WorkRang
 from ..media.source import VideoSource
 from ..track.tracker import MicroTracker
 from ..ai.detector import FaceDetector
-from ..ai.subtitles import SubtitleManager
+from ..ai.subtitles import SubtitleManager, SubtitleItem
 from ..export.exporter import FastCopyExporter, RenderExporter
 
 # ── 1. 播放背景 Worker ──
@@ -495,7 +495,7 @@ class MainWindow(QMainWindow):
         self._refresh_track_list()
         self.track_list.setCurrentRow(len(self.project.tracks) - 1)
         if self.current_frame_rgb is not None and self.video_source:
-            self.video_view.update_frame_data(self.current_frame_rgb, self.project.tracks, cur_t)
+            self.video_view.update_frame_data(self.current_frame_rgb, self.project.tracks, self.project.subtitles, cur_t)
 
     def _jump_prev_keyframe(self):
         if not self.video_source:
