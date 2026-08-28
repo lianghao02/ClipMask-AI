@@ -566,8 +566,16 @@ class MainWindow(QMainWindow):
         row = self.track_list.currentRow()
         if 0 <= row < len(self.project.tracks):
             kf_times = [kf.time for kf in self.project.tracks[row].keyframes]
+
+        selected_sub = self._selected_subtitle()
+        selected_sub_id = selected_sub.id if selected_sub else -1
             
-        self.timeline.update_state(cur_t, in_t, out_t, kf_times, self.speech_segments)
+        self.timeline.update_state(
+            cur_t, in_t, out_t, kf_times,
+            speech_segments=self.speech_segments,
+            subtitles=self.project.subtitles,
+            selected_sub_id=selected_sub_id
+        )
 
     def _on_user_drawn_rect(self, x: int, y: int, w: int, h: int):
         if not self.video_source:
@@ -767,6 +775,12 @@ class MainWindow(QMainWindow):
 
     def _on_track_selection_changed(self, row: int):
         if 0 <= row < len(self.project.tracks):
+            # 互斥清除字幕選取，確保共用起訖控制列切換至遮蔽軌跡
+            self.sub_list.blockSignals(True)
+            self.sub_list.setCurrentRow(-1)
+            self.sub_list.clearSelection()
+            self.sub_list.blockSignals(False)
+
             track = self.project.tracks[row]
             self.combo_style.blockSignals(True)
             self.combo_style.setCurrentIndex(0 if track.mask.style == "mosaic" else 1)
@@ -863,6 +877,12 @@ class MainWindow(QMainWindow):
 
     def _on_sub_selection_changed(self, row: int):
         if 0 <= row < len(self.project.subtitles):
+            # 互斥清除遮蔽軌跡選取，確保共用起訖控制列切換至字幕
+            self.track_list.blockSignals(True)
+            self.track_list.setCurrentRow(-1)
+            self.track_list.clearSelection()
+            self.track_list.blockSignals(False)
+
             sub = self.project.subtitles[row]
             self.seek_to(sub.start_sec)
         self._update_edit_context()

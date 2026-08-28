@@ -69,6 +69,8 @@ class TimelineTrackCanvas(QWidget):
         self.out_time = 0.0
         self.keyframe_times: List[float] = []
         self.speech_segments: list = []  # [(start_sec, end_sec), ...]
+        self.subtitles: list = []  # SubtitleItem list
+        self.selected_sub_id: int = -1
         
         # 拖拉狀態
         self.is_seeking = False
@@ -76,7 +78,7 @@ class TimelineTrackCanvas(QWidget):
         self.drag_start_time = 0.0
         self.temp_drag_time = 0.0
 
-    def update_state(self, current_time: float, duration: float, in_time: float, out_time: float, keyframe_times: List[float], speech_segments: list = None):
+    def update_state(self, current_time: float, duration: float, in_time: float, out_time: float, keyframe_times: List[float], speech_segments: list = None, subtitles: list = None, selected_sub_id: int = -1):
         self.current_time = current_time
         self.duration = max(0.001, duration)
         self.in_time = in_time
@@ -84,6 +86,9 @@ class TimelineTrackCanvas(QWidget):
         self.keyframe_times = keyframe_times
         if speech_segments is not None:
             self.speech_segments = speech_segments
+        if subtitles is not None:
+            self.subtitles = subtitles
+        self.selected_sub_id = selected_sub_id
         self.update()
 
     def time_to_x(self, t: float) -> float:
@@ -108,7 +113,7 @@ class TimelineTrackCanvas(QWidget):
         painter.setPen(QPen(QColor(220, 215, 204), 1.5))
         painter.drawRoundedRect(0, 0, w, h, 6, 6)
 
-        # 2. 繪製語音聲波活動區間 (鼠尾草綠人聲條 🌿)
+        # 2. 繪製語音聲波活動區間 (頂部鼠尾草綠人聲條 🌿)
         for seg in self.speech_segments:
             s_t = seg.start_sec if hasattr(seg, 'start_sec') else seg[0]
             e_t = seg.end_sec if hasattr(seg, 'end_sec') else seg[1]
@@ -118,7 +123,26 @@ class TimelineTrackCanvas(QWidget):
                 seg_w = max(3.0, ex - sx)
                 painter.fillRect(QRectF(sx, 1, seg_w, 5), QColor(95, 135, 104, 210))
 
-        # 3. 繪製 Work Range 區間帶 (或正在拖拉中的臨時區間)
+        # 3. 繪製聽打字幕區段 (底部莫蘭迪紫丁香色條 🎙️)
+        for sub in self.subtitles:
+            s_t = sub.start_sec
+            e_t = sub.end_sec
+            if e_t > s_t:
+                sx = self.time_to_x(s_t)
+                ex = self.time_to_x(e_t)
+                sub_w = max(4.0, ex - sx)
+                is_selected = (sub.id == self.selected_sub_id)
+                
+                if is_selected:
+                    # 選取中：高亮明亮紫粉色 + 邊框手柄
+                    painter.fillRect(QRectF(sx, h - 9, sub_w, 7), QColor(165, 135, 185, 230))
+                    painter.setPen(QPen(QColor(130, 95, 155, 255), 1.5))
+                    painter.drawRect(QRectF(sx, h - 9, sub_w, 7))
+                else:
+                    # 一般狀態：柔和莫蘭迪灰紫色
+                    painter.fillRect(QRectF(sx, h - 7, sub_w, 5), QColor(154, 144, 168, 180))
+
+        # 4. 繪製 Work Range 區間帶 (或正在拖拉中的臨時區間)
         display_in = self.in_time
         display_out = self.out_time
         
@@ -137,12 +161,12 @@ class TimelineTrackCanvas(QWidget):
             painter.drawLine(int(x_in), 3, int(x_in), h - 3)
             painter.drawLine(int(x_out), 3, int(x_out), h - 3)
 
-        # 4. 刻度線
+        # 5. 刻度線
         painter.setPen(QPen(QColor(198, 192, 180), 1))
         steps = 10
         for i in range(1, steps):
             sx = (w / steps) * i
-            painter.drawLine(int(sx), h - 10, int(sx), h - 3)
+            painter.drawLine(int(sx), h - 14, int(sx), h - 9)
 
         # 4. 關鍵影格鑽石 (芥末暖黃 🔷)
         for kf_t in self.keyframe_times:
@@ -396,13 +420,13 @@ class TimelineWidget(QWidget):
         self.lbl_edit_context.setText(f"目前編輯：{icon} {label}　{self._format_time(start)} ～ {self._format_time(end)}")
         self.btn_reset_range.setText(reset_text)
 
-    def update_state(self, current_time: float, in_time: float, out_time: float, keyframe_times: List[float], speech_segments: list = None):
+    def update_state(self, current_time: float, in_time: float, out_time: float, keyframe_times: List[float], speech_segments: list = None, subtitles: list = None, selected_sub_id: int = -1):
         self.current_time = current_time
         self.in_time = in_time
         self.out_time = out_time if out_time > in_time else self.duration
         self.keyframe_times = keyframe_times
         
-        self.canvas.update_state(current_time, self.duration, self.in_time, self.out_time, keyframe_times, speech_segments)
+        self.canvas.update_state(current_time, self.duration, self.in_time, self.out_time, keyframe_times, speech_segments, subtitles, selected_sub_id)
         
         cur_str = self._format_time(self.current_time)
         dur_str = self._format_time(self.duration)
