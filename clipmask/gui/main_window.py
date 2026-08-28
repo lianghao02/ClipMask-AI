@@ -14,7 +14,8 @@ from PySide6.QtWidgets import (
     QLineEdit, QProgressDialog
 )
 from PySide6.QtGui import QImage, QKeySequence, QShortcut, QDragEnterEvent, QDropEvent, QIcon, QColor
-from PySide6.QtCore import Qt, QThread, Signal, Slot
+from PySide6.QtCore import Qt, QThread, Signal, Slot, QUrl
+from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from .video_view import VideoGraphicsView
 from .timeline import TimelineWidget
 from .styles import MORANDI_JOURNAL_QSS
@@ -27,7 +28,7 @@ from ..ai.subtitles import SubtitleManager, SubtitleItem
 from ..ai.vad import VoiceActivityDetector, SpeechSegment
 from ..export.exporter import FastCopyExporter, RenderExporter
 
-# ── 1. 播放背景 Worker (音畫絕對同步與實時音訊輸出) ──
+# ── 1. 播放背景 Worker (Master Clock 精確畫面同步) ──
 class PlaybackWorker(QThread):
     frame_ready = Signal(np.ndarray, float)
     finished = Signal()
@@ -39,42 +40,21 @@ class PlaybackWorker(QThread):
         self.fps = fps if fps > 0 else 30.0
         self.frame_delay = 1.0 / self.fps
         self._is_running = True
-        self.audio_engine = None
-        self.audio_source = None
 
     def stop(self):
         self._is_running = False
-        if self.audio_engine:
-            self.audio_engine.stop()
-        if self.audio_source:
-            self.audio_source.close()
         self.wait()
 
     def run(self):
         try:
-            from ..media.audio import AudioPlaybackEngine
-            from ..media.source import AudioSource
-            
             v_source = VideoSource(self.video_path)
             v_source.seek_exact(self.start_time)
-            
-            self.audio_source = AudioSource(self.video_path)
-            if self.audio_source.has_audio:
-                self.audio_source.seek_exact(self.start_time)
-                self.audio_engine = AudioPlaybackEngine(sample_rate=44100, channels=2)
 
             # 使用高精度系統 Master Clock 同步播放
             start_wall = time.perf_counter()
             start_pts = self.start_time
             
             while self._is_running:
-                # 1. 讀取並推送音訊 (每次讀取音訊封包)
-                if self.audio_source and self.audio_source.has_audio and self.audio_engine:
-                    a_chunk = self.audio_source.read_next_chunk()
-                    if a_chunk is not None:
-                        self.audio_engine.write(a_chunk)
-
-                # 2. 讀取並發射視訊影格
                 frame = v_source.read_next_frame()
                 if frame is None or not self._is_running:
                     break
@@ -90,10 +70,6 @@ class PlaybackWorker(QThread):
                 if delay_needed > 0.002:
                     time.sleep(delay_needed)
                 
-            if self.audio_engine:
-                self.audio_engine.stop()
-            if self.audio_source:
-                self.audio_source.close()
             v_source.close()
         except Exception:
             pass
@@ -196,6 +172,11 @@ class MainWindow(QMainWindow):
         self.export_worker: ExportWorker = None
         self.vad_worker: VadWorker = None
         self.thumb_extractor: ThumbnailExtractor = None
+
+        # Qt 原生音訊引擎 (零噪音、CD 級音質與 A/V 精準同步)
+        self.audio_output = QAudioOutput(self)
+        self.media_player = QMediaPlayer(self)
+        self.media_player.setAudioOutput(self.audio_output)
         
         self.init_ui()
         self.setup_shortcuts()
@@ -467,6 +448,9 @@ class MainWindow(QMainWindow):
             self._update_action_state()
             self._update_safety_status()
 
+            # 設定 Qt 原生音訊來源
+            self.media_player.setSource(QUrl.fromLocalFile(path))
+
             # 啟動背景人聲活動偵測 (VAD)
             self.speech_segments.clear()
             self.vad_worker = VadWorker(path)
@@ -512,6 +496,11 @@ class MainWindow(QMainWindow):
                 is_speech_active=is_speech
             )
             self._update_timeline_state()
+            
+        # 同步音訊播放位置
+        if self.media_player:
+            self.media_player.setPosition(int(round(seconds * 1000)))
+
         if getattr(self, "_resume_after_scrub", False):
             self._resume_after_scrub = False
             self._start_playback()
@@ -544,6 +533,11 @@ class MainWindow(QMainWindow):
         if cur_t >= self.video_source.duration:
             cur_t = 0.0
             
+        # 同步啟動 Qt 原生音訊播放
+        if self.media_player:
+            self.media_player.setPosition(int(round(cur_t * 1000)))
+            self.media_player.play()
+
         self.playback_worker = PlaybackWorker(
             self.video_source.video_path,
             cur_t,
@@ -554,6 +548,8 @@ class MainWindow(QMainWindow):
         self.playback_worker.start()
 
     def _stop_playback(self):
+        if self.media_player:
+            self.media_player.pause()
         if self.playback_worker and self.playback_worker.isRunning():
             self.playback_worker.stop()
             self.playback_worker = None
@@ -1196,6 +1192,8 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._stop_playback()
+        if hasattr(self, "media_player") and self.media_player:
+            self.media_player.stop()
         for worker_name in ("ai_worker", "export_worker", "vad_worker"):
             w = getattr(self, worker_name, None)
             if w and w.isRunning():
