@@ -1,5 +1,5 @@
-﻿"""
-ClipMask-AI Video Graphics View (支援畫布直接拖曳開檔)
+"""
+ClipMask-AI Video Graphics View (支援遮蔽框 + 聽打字幕即時渲染)
 """
 from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsRectItem, QGraphicsPixmapItem
 from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QBrush, QWheelEvent, QDragEnterEvent, QDropEvent
@@ -11,15 +11,16 @@ import numpy as np
 from ..models.project import Track
 from ..track.evaluator import TrackEvaluator
 from ..export.exporter import RenderExporter
+from ..ai.subtitles import SubtitleManager, SubtitleItem
 
 class VideoGraphicsView(QGraphicsView):
     rect_drawn = Signal(int, int, int, int)
     wheel_stepped = Signal(int)
-    file_dropped = Signal(str)  # 畫布拖入影片路徑信號
+    file_dropped = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setAcceptDrops(True)  # 啟用畫布直接拖曳接收
+        self.setAcceptDrops(True)
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
         
@@ -48,7 +49,7 @@ class VideoGraphicsView(QGraphicsView):
         self.scene.setSceneRect(0, 0, width, height)
         self.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
-    def update_frame_data(self, frame_rgb: np.ndarray, tracks: List[Track], current_time: float):
+    def update_frame_data(self, frame_rgb: np.ndarray, tracks: List[Track], subtitles: List[SubtitleItem], current_time: float):
         orig_h, orig_w = frame_rgb.shape[:2]
         if self.video_w != orig_w or self.video_h != orig_h:
             self.set_video_dimensions(orig_w, orig_h)
@@ -56,14 +57,22 @@ class VideoGraphicsView(QGraphicsView):
         display_rgb = frame_rgb.copy()
         evaluated = TrackEvaluator.evaluate_all_tracks_at(tracks, current_time, self.video_w, self.video_h)
         
+        # 1. 應用遮蔽
         if self.show_real_mask_preview:
             for track, rect in evaluated:
                 display_rgb = RenderExporter.apply_mosaic_or_blur(display_rgb, rect, track.mask.style, track.mask.strength)
+
+        # 2. 應用聽打字幕
+        if subtitles:
+            sub_text = SubtitleManager.get_active_subtitle_at(subtitles, current_time)
+            if sub_text:
+                display_rgb = SubtitleManager.draw_subtitle_on_image(display_rgb, sub_text)
 
         bytes_per_line = 3 * orig_w
         qimg = QImage(display_rgb.data, orig_w, orig_h, bytes_per_line, QImage.Format.Format_RGB888)
         self.pixmap_item.setPixmap(QPixmap.fromImage(qimg))
         
+        # 輔助框
         for item in self.mask_items:
             self.scene.removeItem(item)
         self.mask_items.clear()
@@ -78,7 +87,6 @@ class VideoGraphicsView(QGraphicsView):
                 self.scene.addItem(rect_item)
                 self.mask_items.append(rect_item)
 
-    # ──── 畫布拖曳開檔 ────
     def dragEnterEvent(self, event: QDragEnterEvent):
         if event.mimeData().hasUrls():
             for url in event.mimeData().urls():

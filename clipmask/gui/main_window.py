@@ -213,23 +213,23 @@ class MainWindow(QMainWindow):
 
         splitter.addWidget(left_widget)
 
-        # ── 右側：遮蔽物件與設定清單 ──
+        # ── 右側：遮蔽管理 + 聽打字幕面板 ──
         right_widget = QWidget()
         right_layout = QVBoxLayout(right_widget)
         right_layout.setContentsMargins(6, 0, 6, 0)
-        right_layout.setSpacing(12)
+        right_layout.setSpacing(10)
 
-        # 遮蔽物件清單
+        # 1. 遮蔽物件清單
         grp_tracks = QGroupBox("📋 遮蔽人物與軌跡 (Tracks)")
         grp_layout = QVBoxLayout(grp_tracks)
         
         self.track_list = QListWidget()
+        self.track_list.setMaximumHeight(125)
         self.track_list.currentRowChanged.connect(self._on_track_selection_changed)
         grp_layout.addWidget(self.track_list)
 
         track_btn_layout = QHBoxLayout()
         self.btn_track_forward = QPushButton("🎯 向後預測 2 秒")
-        self.btn_track_forward.setToolTip("使用 CSRT 追蹤演算法自動向後預測並產生關鍵影格")
         self.btn_track_forward.clicked.connect(self._track_selected_forward)
         track_btn_layout.addWidget(self.btn_track_forward)
 
@@ -238,50 +238,75 @@ class MainWindow(QMainWindow):
         track_btn_layout.addWidget(btn_del_track)
         grp_layout.addLayout(track_btn_layout)
 
-        right_layout.addWidget(grp_tracks)
-
         # 樣式調整
-        grp_style = QGroupBox("⚙️ 遮蔽手帳樣式")
-        style_layout = QVBoxLayout(grp_style)
-        
         row_style = QHBoxLayout()
         row_style.addWidget(QLabel("樣式:"))
         self.combo_style = QComboBox()
-        self.combo_style.addItems(["馬賽克 (Mosaic)", "高斯模糊 (Blur)"])
+        self.combo_style.addItems(["馬賽克", "高斯模糊"])
         self.combo_style.currentIndexChanged.connect(self._on_style_changed)
         row_style.addWidget(self.combo_style)
-        style_layout.addLayout(row_style)
 
-        row_strength = QHBoxLayout()
-        row_strength.addWidget(QLabel("強度 / 區塊:"))
+        row_style.addWidget(QLabel("強度:"))
         self.spin_strength = QSpinBox()
         self.spin_strength.setRange(4, 80)
         self.spin_strength.setValue(20)
         self.spin_strength.valueChanged.connect(self._on_strength_changed)
-        row_strength.addWidget(self.spin_strength)
-        style_layout.addLayout(row_strength)
+        row_style.addWidget(self.spin_strength)
+        grp_layout.addLayout(row_style)
 
-        lbl_hint = QLabel("💡 剪輯與操作指南：\n1. 【右鍵拖拉時間軸】或【Shift+左鍵】可快速選取要剪輯的區間\n2. 點「⚡ 僅剪輯所選區間」可 2 秒秒出無碼片段\n3. 點「🛡️ 匯出馬賽克影片」可將剪輯與馬賽克一次壓制完成！\n4. 隨時可點「🔄 全片」重設為整部影片")
-        lbl_hint.setWordWrap(True)
-        lbl_hint.setStyleSheet("color: #78716c; font-size: 11px; margin-top: 4px; line-height: 1.4;")
-        style_layout.addWidget(lbl_hint)
+        right_layout.addWidget(grp_tracks)
 
-        right_layout.addWidget(grp_style)
-
-        # 字幕管理
-        grp_subs = QGroupBox("🎙️ 語音字幕 (Subtitles)")
+        # 2. 即時聽打字幕專屬工作站
+        grp_subs = QGroupBox("🎙️ 即時聽打字幕 (Transcribe)")
         sub_layout = QVBoxLayout(grp_subs)
-        
-        self.btn_import_srt = QPushButton("📄 匯入 SRT 字幕檔")
-        self.btn_import_srt.clicked.connect(self._import_srt)
-        sub_layout.addWidget(self.btn_import_srt)
 
-        self.lbl_sub_status = QLabel("目前無載入字幕")
-        self.lbl_sub_status.setStyleSheet("color: #8c857b; font-size: 11px;")
-        sub_layout.addWidget(self.lbl_sub_status)
+        # 聽打輸入列 (Enter 送出)
+        row_input = QHBoxLayout()
+        self.edit_sub_text = QLineEdit()
+        self.edit_sub_text.setPlaceholderText("聽打這句話... (按 Enter 立即打點新增)")
+        self.edit_sub_text.returnPressed.connect(self._add_current_transcribe)
+        row_input.addWidget(self.edit_sub_text)
+
+        self.btn_add_sub = QPushButton("➕ 新增 (Enter)")
+        self.btn_add_sub.setStyleSheet("font-weight: bold; color: #5f8768;")
+        self.btn_add_sub.clicked.connect(self._add_current_transcribe)
+        row_input.addWidget(self.btn_add_sub)
+        sub_layout.addLayout(row_input)
+
+        # 時間點微調
+        row_sub_time = QHBoxLayout()
+        self.btn_sub_in = QPushButton("[ 設當前為起點")
+        self.btn_sub_in.clicked.connect(self._set_sub_in_point)
+        row_sub_time.addWidget(self.btn_sub_in)
+
+        self.btn_sub_out = QPushButton("設當前為終點 ]")
+        self.btn_sub_out.clicked.connect(self._set_sub_out_point)
+        row_sub_time.addWidget(self.btn_sub_out)
+        sub_layout.addLayout(row_sub_time)
+
+        # 字幕清單 (點選即跳轉重聽)
+        self.sub_list = QListWidget()
+        self.sub_list.currentRowChanged.connect(self._on_sub_selection_changed)
+        sub_layout.addWidget(self.sub_list)
+
+        # 字幕管理按鈕列
+        row_sub_actions = QHBoxLayout()
+        self.btn_del_sub = QPushButton("🗑️ 刪除這句")
+        self.btn_del_sub.clicked.connect(self._delete_selected_sub)
+        row_sub_actions.addWidget(self.btn_del_sub)
+
+        self.btn_export_srt = QPushButton("💾 匯出 SRT 檔")
+        self.btn_export_srt.setToolTip("將聽打內容匯出為標準繁中 SRT 字幕檔")
+        self.btn_export_srt.clicked.connect(self._export_srt)
+        row_sub_actions.addWidget(self.btn_export_srt)
+        sub_layout.addLayout(row_sub_actions)
+
+        lbl_sub_hint = QLabel("💡 聽打技巧：\n• 停在講話起點，打字後按 Enter 即可完成打點\n• 點選清單任一句，畫面瞬間跳轉至該秒數反覆重聽\n• 匯出影片時會自動在畫面底部燒錄字卡！")
+        lbl_sub_hint.setWordWrap(True)
+        lbl_sub_hint.setStyleSheet("color: #78716c; font-size: 11px; margin-top: 4px; line-height: 1.4;")
+        sub_layout.addWidget(lbl_sub_hint)
 
         right_layout.addWidget(grp_subs)
-        right_layout.addStretch()
 
         splitter.addWidget(right_widget)
         splitter.setStretchFactor(0, 4)
@@ -329,6 +354,7 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("["), self, self._jump_prev_keyframe)
         QShortcut(QKeySequence("]"), self, self._jump_next_keyframe)
         QShortcut(QKeySequence("K"), self, self._toggle_keyframe_at_current)
+        QShortcut(QKeySequence("T"), self, lambda: self.edit_sub_text.setFocus())
 
     def _jump_relative_time(self, dt: float):
         if not self.video_source:
@@ -342,7 +368,7 @@ class MainWindow(QMainWindow):
         txt = "👁️ 真實打碼預覽: 開" if self.video_view.show_real_mask_preview else "👁️ 真實打碼預覽: 關"
         self.btn_toggle_preview.setText(txt)
         if self.current_frame_rgb is not None and self.video_source:
-            self.video_view.update_frame_data(self.current_frame_rgb, self.project.tracks, self.video_source.current_time)
+            self.video_view.update_frame_data(self.current_frame_rgb, self.project.tracks, self.project.subtitles, self.video_source.current_time)
 
     def open_video(self):
         path, _ = QFileDialog.getOpenFileName(self, "選擇影片", "", "Video Files (*.mp4 *.mkv *.mov *.avi *.ts *.wmv *.webm *.flv *.m4v)")
@@ -364,10 +390,12 @@ class MainWindow(QMainWindow):
             self.project.source = self.video_source.metadata
             self.project.work_range = WorkRange(0.0, self.video_source.duration)
             self.project.tracks.clear()
+            self.project.subtitles.clear()
             
             self.timeline.set_duration(self.video_source.duration)
             self.seek_to(0.0)
             self._refresh_track_list()
+            self._refresh_sub_list()
             self.setWindowTitle(f"ClipMask-AI — {os.path.basename(path)}")
         except Exception as e:
             QMessageBox.critical(self, "載入影片失敗", f"無法解碼影片檔案：\n{path}\n\n錯誤訊息：{e}")
@@ -378,7 +406,7 @@ class MainWindow(QMainWindow):
         frame = self.video_source.seek_exact(seconds)
         if frame is not None:
             self.current_frame_rgb = frame
-            self.video_view.update_frame_data(frame, self.project.tracks, self.video_source.current_time)
+            self.video_view.update_frame_data(frame, self.project.tracks, self.project.subtitles, self.video_source.current_time)
             self._update_timeline_state()
 
     def step_frame(self, delta: int):
@@ -424,7 +452,7 @@ class MainWindow(QMainWindow):
         self.current_frame_rgb = frame_rgb
         if self.video_source:
             self.video_source.current_time = current_time
-        self.video_view.update_frame_data(frame_rgb, self.project.tracks, current_time)
+        self.video_view.update_frame_data(frame_rgb, self.project.tracks, self.project.subtitles, current_time)
         self._update_timeline_state()
 
     @Slot()
@@ -596,14 +624,14 @@ class MainWindow(QMainWindow):
         if 0 <= row < len(self.project.tracks):
             self.project.tracks[row].mask.style = "mosaic" if index == 0 else "blur"
             if self.current_frame_rgb is not None and self.video_source:
-                self.video_view.update_frame_data(self.current_frame_rgb, self.project.tracks, self.video_source.current_time)
+                self.video_view.update_frame_data(self.current_frame_rgb, self.project.tracks, self.project.subtitles, self.video_source.current_time)
 
     def _on_strength_changed(self, val: int):
         row = self.track_list.currentRow()
         if 0 <= row < len(self.project.tracks):
             self.project.tracks[row].mask.strength = val
             if self.current_frame_rgb is not None and self.video_source:
-                self.video_view.update_frame_data(self.current_frame_rgb, self.project.tracks, self.video_source.current_time)
+                self.video_view.update_frame_data(self.current_frame_rgb, self.project.tracks, self.project.subtitles, self.video_source.current_time)
 
     def _delete_selected_track(self):
         row = self.track_list.currentRow()
@@ -611,15 +639,76 @@ class MainWindow(QMainWindow):
             del self.project.tracks[row]
             self._refresh_track_list()
             if self.current_frame_rgb is not None and self.video_source:
-                self.video_view.update_frame_data(self.current_frame_rgb, self.project.tracks, self.video_source.current_time)
+                self.video_view.update_frame_data(self.current_frame_rgb, self.project.tracks, self.project.subtitles, self.video_source.current_time)
 
-    def _import_srt(self):
-        path, _ = QFileDialog.getOpenFileName(self, "匯入 SRT 字幕", "", "SRT Files (*.srt)")
-        if path:
-            subs = SubtitleManager.parse_srt_file(path)
-            self.project.subtitles = subs
-            self.lbl_sub_status.setText(f"已載入 {len(subs)} 條字幕: {os.path.basename(path)}")
-            QMessageBox.information(self, "字幕載入", f"已成功載入 {len(subs)} 條字幕！")
+    # ──── 即時聽打字幕系統 ────
+    def _add_current_transcribe(self):
+        if not self.video_source:
+            return
+        text = self.edit_sub_text.text().strip()
+        if not text:
+            return
+            
+        cur_t = self.video_source.current_time
+        end_t = min(self.video_source.duration, cur_t + 3.0)
+        
+        new_id = len(self.project.subtitles) + 1
+        item = SubtitleItem(id=new_id, start_sec=cur_t, end_sec=end_t, text=text)
+        self.project.subtitles.append(item)
+        self.project.subtitles.sort(key=lambda s: s.start_sec)
+        
+        self.edit_sub_text.clear()
+        self._refresh_sub_list()
+        self.seek_to(cur_t)
+
+    def _refresh_sub_list(self):
+        self.sub_list.blockSignals(True)
+        self.sub_list.clear()
+        for idx, sub in enumerate(self.project.subtitles):
+            s_str = f"{int(sub.start_sec//60):02d}:{int(sub.start_sec%60):02d}"
+            e_str = f"{int(sub.end_sec//60):02d}:{int(sub.end_sec%60):02d}"
+            item = QListWidgetItem(f"[{s_str}~{e_str}] {sub.text}")
+            self.sub_list.addItem(item)
+        self.sub_list.blockSignals(False)
+
+    def _on_sub_selection_changed(self, row: int):
+        if 0 <= row < len(self.project.subtitles):
+            sub = self.project.subtitles[row]
+            self.seek_to(sub.start_sec)
+
+    def _set_sub_in_point(self):
+        row = self.sub_list.currentRow()
+        if 0 <= row < len(self.project.subtitles) and self.video_source:
+            self.project.subtitles[row].start_sec = self.video_source.current_time
+            self._refresh_sub_list()
+            self.seek_to(self.video_source.current_time)
+
+    def _set_sub_out_point(self):
+        row = self.sub_list.currentRow()
+        if 0 <= row < len(self.project.subtitles) and self.video_source:
+            self.project.subtitles[row].end_sec = max(self.project.subtitles[row].start_sec + 0.5, self.video_source.current_time)
+            self._refresh_sub_list()
+            self.seek_to(self.video_source.current_time)
+
+    def _delete_selected_sub(self):
+        row = self.sub_list.currentRow()
+        if 0 <= row < len(self.project.subtitles):
+            del self.project.subtitles[row]
+            self._refresh_sub_list()
+            if self.current_frame_rgb is not None and self.video_source:
+                self.video_view.update_frame_data(self.current_frame_rgb, self.project.tracks, self.project.subtitles, self.video_source.current_time)
+
+    def _export_srt(self):
+        if not self.project.subtitles:
+            QMessageBox.warning(self, "提示", "目前尚無聽打字幕可匯出。")
+            return
+        out_path, _ = QFileDialog.getSaveFileName(self, "匯出 SRT 字幕檔", "subtitles.srt", "SRT Files (*.srt)")
+        if out_path:
+            ok = SubtitleManager.export_srt_file(self.project.subtitles, out_path)
+            if ok:
+                QMessageBox.information(self, "匯出成功", f"SRT 字幕檔已成功儲存至：\n{out_path}")
+            else:
+                QMessageBox.critical(self, "匯出失敗", "儲存 SRT 檔案時發生錯誤。")
 
     def _set_in_point(self):
         if self.video_source and self.project.work_range:
