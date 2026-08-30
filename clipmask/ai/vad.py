@@ -34,31 +34,25 @@ class VoiceActivityDetector:
             # 重新取樣為 16000Hz 單聲道
             resampler = av.AudioResampler(format="fltp", layout="mono", rate=16000)
 
-            samples_list = []
+            # 長片僅保留不足一個視窗的樣本；不再把整段音軌放入記憶體。
+            sample_rate = 16000
+            samples_per_window = int(sample_rate * (frame_duration_ms / 1000.0))
+            remainder = np.empty(0, dtype=np.float32)
+            rms_values = []
             for frame in container.decode(audio_stream):
                 resampled_frames = resampler.resample(frame)
                 for rf in resampled_frames:
-                    arr = rf.to_ndarray()[0]  # shape: (N,)
-                    samples_list.append(arr)
+                    arr = rf.to_ndarray()[0].astype(np.float32, copy=False)
+                    samples = np.concatenate((remainder, arr)) if remainder.size else arr
+                    usable = (samples.size // samples_per_window) * samples_per_window
+                    if usable:
+                        windows = samples[:usable].reshape(-1, samples_per_window)
+                        rms_values.extend(np.sqrt(np.mean(windows * windows, axis=1) + 1e-9).tolist())
+                    remainder = samples[usable:]
             container.close()
 
-            if not samples_list:
+            if not rms_values:
                 return []
-
-            audio_data = np.concatenate(samples_list)
-            sample_rate = 16000
-
-            # 依 50ms 計算 RMS 能量
-            samples_per_window = int(sample_rate * (frame_duration_ms / 1000.0))
-            num_windows = len(audio_data) // samples_per_window
-            if num_windows == 0:
-                return []
-
-            rms_values = []
-            for i in range(num_windows):
-                window = audio_data[i * samples_per_window : (i + 1) * samples_per_window]
-                rms = np.sqrt(np.mean(window ** 2) + 1e-9)
-                rms_values.append(rms)
 
             rms_arr = np.array(rms_values)
             # 動態能量門檻 (中位數 + 0.35 * 標準差)

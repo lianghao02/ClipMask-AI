@@ -29,7 +29,7 @@ class VideoSource:
         if self.stream.duration:
             self.duration = float(self.stream.duration * self.time_base)
         elif self.container.duration:
-            self.duration = float(self.container.duration / av.time.AV_TIME_BASE)
+            self.duration = float(self.container.duration / av.time_base)
         else:
             self.duration = 0.0
 

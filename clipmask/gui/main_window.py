@@ -188,6 +188,7 @@ class MainWindow(QMainWindow):
         self.media_player.setAudioOutput(self.audio_output)
         
         self.init_ui()
+        self._update_review_summary()
         self.setup_shortcuts()
         self._update_action_state()
 
@@ -289,7 +290,17 @@ class MainWindow(QMainWindow):
         self.track_list = QListWidget()
         self.track_list.setMaximumHeight(125)
         self.track_list.currentRowChanged.connect(self._on_track_selection_changed)
+        self.track_list.itemChanged.connect(self._on_track_review_changed)
         grp_layout.addWidget(self.track_list)
+
+        self.lbl_review_summary = QLabel("待檢查遮蔽：尚未建立軌跡")
+        self.lbl_review_summary.setWordWrap(True)
+        self.lbl_review_summary.setStyleSheet("color: #8a5b20; background: #fff4dc; padding: 5px 7px; border-radius: 5px;")
+        grp_layout.addWidget(self.lbl_review_summary)
+
+        self.btn_next_review = QPushButton("下一個待檢查遮蔽")
+        self.btn_next_review.clicked.connect(self._jump_to_next_pending_review)
+        grp_layout.addWidget(self.btn_next_review)
 
         track_btn_layout = QHBoxLayout()
         self.btn_track_forward = QPushButton("🎯 追蹤2秒")
@@ -621,6 +632,8 @@ class MainWindow(QMainWindow):
             
         # 計算未覆蓋安全警示區間
         uncovered_ranges = []
+        pending_ranges = []
+        reviewed_ranges = []
         if in_t < out_t:
             if not self.project.tracks:
                 uncovered_ranges.append((in_t, out_t))
@@ -633,12 +646,23 @@ class MainWindow(QMainWindow):
                 if cov_max < out_t:
                     uncovered_ranges.append((cov_max, out_t))
 
+        for track in self.project.tracks:
+            if not track.keyframes:
+                continue
+            track_range = (track.keyframes[0].time, track.keyframes[-1].time)
+            if track.reviewed:
+                reviewed_ranges.append(track_range)
+            else:
+                pending_ranges.append(track_range)
+
         self.timeline.update_state(
             cur_t, in_t, out_t, kf_times,
             speech_segments=self.speech_segments,
             subtitles=self.project.subtitles,
             selected_sub_id=selected_sub_id,
-            uncovered_ranges=uncovered_ranges
+            uncovered_ranges=uncovered_ranges,
+            pending_ranges=pending_ranges,
+            reviewed_ranges=reviewed_ranges,
         )
 
     def _on_timeline_sub_selected(self, sub_id: int):
@@ -870,15 +894,54 @@ class MainWindow(QMainWindow):
 
     def _refresh_track_list(self):
         cur_row = self.track_list.currentRow()
+        self.track_list.blockSignals(True)
         self.track_list.clear()
         for t in self.project.tracks:
             kf_count = len(t.keyframes)
             item = QListWidgetItem(f"{t.label} [{kf_count} 關鍵影格 🔷]")
+            item.setData(Qt.ItemDataRole.UserRole, t.id)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked if t.reviewed else Qt.CheckState.Unchecked)
+            item.setText(f"{'✅ 已確認' if t.reviewed else '🟡 待檢查'}　{item.text()}")
             self.track_list.addItem(item)
         if 0 <= cur_row < self.track_list.count():
             self.track_list.setCurrentRow(cur_row)
+        self.track_list.blockSignals(False)
+        self._update_review_summary()
         self._update_timeline_state()
         self._update_safety_status()
+
+    def _on_track_review_changed(self, item: QListWidgetItem):
+        track_id = item.data(Qt.ItemDataRole.UserRole)
+        for track in self.project.tracks:
+            if track.id == track_id:
+                track.reviewed = item.checkState() == Qt.CheckState.Checked
+                item.setText(f"{'✅ 已確認' if track.reviewed else '🟡 待檢查'}　{track.label} [{len(track.keyframes)} 關鍵影格 🔷]")
+                break
+        self._update_review_summary()
+        self._update_timeline_state()
+
+    def _update_review_summary(self):
+        total = len(self.project.tracks)
+        reviewed = sum(1 for track in self.project.tracks if track.reviewed)
+        pending = total - reviewed
+        if not total:
+            self.lbl_review_summary.setText("待檢查遮蔽：尚未建立軌跡")
+        elif pending:
+            self.lbl_review_summary.setText(f"待檢查遮蔽：已確認 {reviewed}/{total}，尚有 {pending} 條。")
+        else:
+            self.lbl_review_summary.setText(f"遮蔽人工檢查完成：{reviewed}/{total} 條。")
+        self.btn_next_review.setEnabled(bool(pending))
+
+    def _jump_to_next_pending_review(self):
+        if not self.video_source:
+            return
+        for index, track in enumerate(self.project.tracks):
+            if not track.reviewed:
+                self.track_list.setCurrentRow(index)
+                if track.keyframes:
+                    self.seek_to(track.keyframes[0].time)
+                return
 
     def _update_action_state(self):
         has_video = self.video_source is not None
@@ -897,10 +960,25 @@ class MainWindow(QMainWindow):
             self.lbl_safety_status.setStyleSheet("color: #8a3b2e; background: #f8e8e2; padding: 6px 8px; border-radius: 6px; font-weight: 600;")
 
     def _confirm_redaction_export(self):
+        pending_tracks = [track for track in self.project.tracks if not track.reviewed]
+        if pending_tracks:
+            QMessageBox.critical(
+                self,
+                "尚有待檢查遮蔽",
+                f"尚有 {len(pending_tracks)} 條遮蔽軌跡未經人工確認。請逐條檢查並勾選「已確認」後再匯出。",
+            )
+            return False
         report = CoverageAnalyzer.analyze(self.project.tracks, self.project.work_range.in_time, self.project.work_range.out_time)
         if report.is_safe_to_continue:
             return True
         detail = "\n".join(f"• {message}" for message in report.messages)
+        if report.critical:
+            QMessageBox.critical(
+                self,
+                "已阻擋去識別化匯出",
+                f"遮蔽覆蓋檢查發現嚴重缺口：\n\n{detail}\n\n請補齊關鍵影格並逐段檢視後再匯出。",
+            )
+            return False
         answer = QMessageBox.warning(self, "遮蔽覆蓋檢查", f"偵測到可能造成漏遮蔽的軌道風險：\n\n{detail}\n\n此檢查不能取代人工逐段看片。是否仍要繼續壓制匯出？", QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Cancel)
         return answer == QMessageBox.StandardButton.Save
 

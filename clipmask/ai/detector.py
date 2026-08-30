@@ -85,11 +85,21 @@ class FaceDetector:
         以高頻率掃描多目標人臉，並自動聚合連續軌跡、填補轉頭/低頭間隙
         """
         active_tracks: List[Track] = []
-        cur_t = in_time
+        video_source.seek_exact(in_time)
+        next_sample_time = in_time
         total_time = max(0.1, out_time - in_time)
         
-        while cur_t <= out_time:
-            frame_rgb = video_source.seek_exact(cur_t)
+        while True:
+            frame_rgb = video_source.read_next_frame()
+            if frame_rgb is None:
+                break
+            cur_t = video_source.current_time
+            if cur_t < in_time - 0.001:
+                continue
+            if cur_t > out_time:
+                break
+            if cur_t + 0.5 / max(video_source.fps, 1.0) < next_sample_time:
+                continue
             if frame_rgb is not None:
                 faces = self.detect_in_frame(frame_rgb)
                 matched_track_indices = set()
@@ -144,11 +154,13 @@ class FaceDetector:
                         )
                         active_tracks.append(new_track)
                         
+            while next_sample_time <= cur_t:
+                next_sample_time += step_sec
+
             if progress_callback:
                 pct = int(((cur_t - in_time) / total_time) * 100)
                 progress_callback(min(99, max(0, pct)))
                 
-            cur_t += step_sec
 
         # ── 後處理：安全補齊與微調 (Post-processing) ──
         # 若某個人物在區間內持續出現超過 1 秒，若最後一顆關鍵影格距離 out_time 小於 1.5 秒，自動補齊至 out_time

@@ -33,13 +33,17 @@ class CoverageAnalyzer:
                 report.critical.append(f"「{name}」沒有關鍵影格。")
                 continue
             if len(keyframes) == 1:
+                report.critical.append("單一關鍵影格無法覆蓋完整工作區間。")
                 report.warnings.append(f"「{name}」只有一個關鍵影格，僅會在該點前後約 1 秒遮蔽。")
                 continue
             if keyframes[0].time > in_time + 0.1:
+                report.critical.append("遮蔽軌道未覆蓋工作區間起點。")
                 report.warnings.append(f"「{name}」在工作區間起點後才開始遮蔽。")
             if keyframes[-1].time < out_time - 0.1:
+                report.critical.append("遮蔽軌道未覆蓋工作區間終點。")
                 report.warnings.append(f"「{name}」在工作區間終點前停止遮蔽。")
             for left, right in zip(keyframes, keyframes[1:]):
                 if right.time - left.time > max_keyframe_gap:
+                    report.critical.append("相鄰關鍵影格間隔超過安全上限。")
                     report.warnings.append(f"「{name}」有 {right.time - left.time:.1f} 秒未經確認的關鍵影格間隔。")
         return report

@@ -74,6 +74,8 @@ class TimelineTrackCanvas(QWidget):
         self.subtitles: list = []  # SubtitleItem list
         self.selected_sub_id: int = -1
         self.uncovered_ranges: list = []  # [(start_sec, end_sec), ...]
+        self.pending_ranges: list = []
+        self.reviewed_ranges: list = []
         
         # 縮放與平移狀態 (剪映同款)
         self.zoom_factor = 1.0       # 1.0x ~ 10.0x
@@ -127,7 +129,7 @@ class TimelineTrackCanvas(QWidget):
         self.pan_offset_t = 0.0
         self.update()
 
-    def update_state(self, current_time: float, duration: float, in_time: float, out_time: float, keyframe_times: List[float], speech_segments: list = None, subtitles: list = None, selected_sub_id: int = -1, uncovered_ranges: list = None):
+    def update_state(self, current_time: float, duration: float, in_time: float, out_time: float, keyframe_times: List[float], speech_segments: list = None, subtitles: list = None, selected_sub_id: int = -1, uncovered_ranges: list = None, pending_ranges: list = None, reviewed_ranges: list = None):
         self.current_time = current_time
         self.duration = max(0.001, duration)
         self.in_time = in_time
@@ -140,6 +142,10 @@ class TimelineTrackCanvas(QWidget):
         self.selected_sub_id = selected_sub_id
         if uncovered_ranges is not None:
             self.uncovered_ranges = uncovered_ranges
+        if pending_ranges is not None:
+            self.pending_ranges = pending_ranges
+        if reviewed_ranges is not None:
+            self.reviewed_ranges = reviewed_ranges
             
         # 播放自動滾動跟隨視窗 (Auto-follow Playhead)
         if self.zoom_factor > 1.0:
@@ -221,6 +227,18 @@ class TimelineTrackCanvas(QWidget):
                 ux1 = self.time_to_x(ur_start)
                 ux2 = self.time_to_x(ur_end)
                 painter.fillRect(QRectF(ux1, 0, max(2.0, ux2 - ux1), 3), QColor(215, 85, 65, 220))
+
+        for range_start, range_end in self.pending_ranges:
+            if range_end > range_start:
+                x1 = self.time_to_x(range_start)
+                x2 = self.time_to_x(range_end)
+                painter.fillRect(QRectF(x1, 3, max(2.0, x2 - x1), 3), QColor(218, 154, 61, 230))
+
+        for range_start, range_end in self.reviewed_ranges:
+            if range_end > range_start:
+                x1 = self.time_to_x(range_start)
+                x2 = self.time_to_x(range_end)
+                painter.fillRect(QRectF(x1, 6, max(2.0, x2 - x1), 3), QColor(78, 139, 98, 220))
 
         # 3. 上軌：繪製語音聲波活動區間 (鼠尾草綠人聲條 🌿)
         for seg in self.speech_segments:
@@ -670,13 +688,13 @@ class TimelineWidget(QWidget):
             self.btn_out.setToolTip("設定全片剪輯/工作區間終點 (O)")
             self.btn_reset_range.setEnabled(True)
 
-    def update_state(self, current_time: float, in_time: float, out_time: float, keyframe_times: List[float], speech_segments: list = None, subtitles: list = None, selected_sub_id: int = -1, uncovered_ranges: list = None):
+    def update_state(self, current_time: float, in_time: float, out_time: float, keyframe_times: List[float], speech_segments: list = None, subtitles: list = None, selected_sub_id: int = -1, uncovered_ranges: list = None, pending_ranges: list = None, reviewed_ranges: list = None):
         self.current_time = current_time
         self.in_time = in_time
         self.out_time = out_time if out_time > in_time else self.duration
         self.keyframe_times = keyframe_times
         
-        self.canvas.update_state(current_time, self.duration, self.in_time, self.out_time, keyframe_times, speech_segments, subtitles, selected_sub_id, uncovered_ranges)
+        self.canvas.update_state(current_time, self.duration, self.in_time, self.out_time, keyframe_times, speech_segments, subtitles, selected_sub_id, uncovered_ranges, pending_ranges, reviewed_ranges)
         
         cur_str = self._format_time(self.current_time)
         dur_str = self._format_time(self.duration)

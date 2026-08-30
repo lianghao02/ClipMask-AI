@@ -23,6 +23,7 @@ class Track:
     label: str = "遮蔽物件"
     type: str = "manual"  # face | plate | manual
     enabled: bool = True
+    reviewed: bool = False
     mask: MaskConfig = field(default_factory=MaskConfig)
     keyframes: List[Keyframe] = field(default_factory=list)
 
@@ -82,6 +83,7 @@ class ProjectState:
                 label=t_data.get("label", "遮蔽物件"),
                 type=t_data.get("type", "manual"),
                 enabled=t_data.get("enabled", True),
+                reviewed=t_data.get("reviewed", False),
                 mask=mask,
                 keyframes=kfs
             )

@@ -5,6 +5,7 @@ import os
 import cv2
 import numpy as np
 import av
+from fractions import Fraction
 from typing import Callable, Optional
 from ..models.project import ProjectState
 from ..media.source import VideoSource
@@ -39,13 +40,24 @@ class FastCopyExporter:
             else:
                 end_pts = None
 
+            stream_base_dts = {}
             for packet in in_container.demux(list(streams_map.keys())):
                 if packet.dts is None:
                     continue
-                if packet.stream == v_stream and packet.pts is not None and end_pts is not None:
-                    if packet.pts > end_pts:
-                        break
-                packet.stream = streams_map[packet.stream]
+                source_stream = packet.stream
+                packet_time = float(packet.pts * source_stream.time_base) if packet.pts is not None else float(packet.dts * source_stream.time_base)
+                packet_duration = float(packet.duration * source_stream.time_base) if packet.duration else 0.0
+                if packet_time >= out_time or packet_time + packet_duration > out_time:
+                    continue
+
+                # Stream copy 必須從關鍵影格開始；各串流各自將 DTS 歸零，
+                # 保留 PTS-DTS 偏移以維持 B-frame 的顯示順序。
+                if source_stream not in stream_base_dts:
+                    stream_base_dts[source_stream] = packet.dts
+                base_dts = stream_base_dts[source_stream]
+                packet.pts = packet.pts - base_dts if packet.pts is not None else None
+                packet.dts = packet.dts - base_dts
+                packet.stream = streams_map[source_stream]
                 out_container.mux(packet)
 
             in_container.close()
@@ -105,6 +117,32 @@ class RenderExporter:
         stream.pix_fmt = "yuv420p"
         stream.options = {"crf": "20", "preset": "fast"}
 
+        # 壓制匯出不應遺失原始音軌。音訊另外解碼、裁切、重採樣並以
+        # 從 0 開始的時間戳寫入，避免來源 PTS 造成輸出 A/V 不同步。
+        audio_input = None
+        audio_stream = None
+        audio_output = None
+        audio_resampler = None
+        audio_samples_written = 0
+        try:
+            audio_input = av.open(project.source.path)
+            if audio_input.streams.audio:
+                audio_stream = audio_input.streams.audio[0]
+                audio_rate = audio_stream.codec_context.sample_rate or 48000
+                audio_layout = audio_stream.layout.name if audio_stream.layout else "stereo"
+                audio_output = output_container.add_stream("aac", rate=audio_rate)
+                audio_output.layout = audio_layout
+                audio_resampler = av.AudioResampler(
+                    format="fltp", layout=audio_layout, rate=audio_rate
+                )
+        except Exception:
+            if audio_input is not None:
+                audio_input.close()
+            audio_input = None
+            audio_stream = None
+            audio_output = None
+            audio_resampler = None
+
         source.seek_exact(in_t)
         
         frame_idx = 0
@@ -119,6 +157,8 @@ class RenderExporter:
             cur_t = source.current_time
             if cur_t > out_t + 0.05:
                 break
+            if cur_t < in_t - 0.001:
+                continue
             
             # 1. 應用遮蔽
             evaluated = TrackEvaluator.evaluate_all_tracks_at(project.tracks, cur_t, source.width, source.height)
@@ -140,12 +180,44 @@ class RenderExporter:
                 pct = int(min(100, max(0, ((cur_t - in_t) / total_duration) * 100)))
                 progress_callback(pct)
 
+        if not cancelled and audio_input and audio_stream and audio_output and audio_resampler:
+            audio_rate = audio_output.rate
+            for input_frame in audio_input.decode(audio_stream):
+                if input_frame.pts is None:
+                    continue
+                for resampled in audio_resampler.resample(input_frame):
+                    frame_start = float(resampled.pts * resampled.time_base) if resampled.pts is not None else 0.0
+                    frame_end = frame_start + (resampled.samples / audio_rate)
+                    if frame_end <= in_t:
+                        continue
+                    if frame_start >= out_t:
+                        break
+
+                    start_sample = max(0, int(round((in_t - frame_start) * audio_rate)))
+                    end_sample = min(resampled.samples, int(round((out_t - frame_start) * audio_rate)))
+                    if end_sample <= start_sample:
+                        continue
+
+                    samples = resampled.to_ndarray()[:, start_sample:end_sample]
+                    clipped = av.AudioFrame.from_ndarray(samples, format="fltp", layout=audio_output.layout.name)
+                    clipped.sample_rate = audio_rate
+                    clipped.pts = audio_samples_written
+                    clipped.time_base = Fraction(1, audio_rate)
+                    audio_samples_written += clipped.samples
+                    for packet in audio_output.encode(clipped):
+                        output_container.mux(packet)
+
         if not cancelled:
             for packet in stream.encode():
                 output_container.mux(packet)
+            if audio_output:
+                for packet in audio_output.encode():
+                    output_container.mux(packet)
 
         output_container.close()
         source.close()
+        if audio_input:
+            audio_input.close()
 
         if cancelled:
             try:
