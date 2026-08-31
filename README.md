@@ -1,9 +1,10 @@
-# 🛡️ ClipMask-AI
+# 🛡️ ClipMask-AI v1.0.0
 
 > **極速離線影音去識別化、AI 人臉追蹤與智慧聽打工作站**
 > *Designed for Newsrooms, Law Enforcement, Public Sector & Privacy Protection.*
 
 [![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12%20%7C%203.13-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Version](https://img.shields.io/badge/version-v1.0.0-blue.svg)](CHANGELOG.md)
 [![GUI](https://img.shields.io/badge/GUI-PySide6%20%2F%20Qt6-41CD52?logo=qt&logoColor=white)](https://www.qt.io/)
 [![Engine](https://img.shields.io/badge/Video%20Engine-PyAV%20(FFmpeg%20C%20Binding)-007808?logo=ffmpeg&logoColor=white)](https://ffmpeg.org/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
