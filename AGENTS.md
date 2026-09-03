@@ -1,33 +1,44 @@
-# 🤖 ClipMask-AI Agent 指南 (AGENTS.md)
+# 12_ClipMask-AI Agent 開發規範
 
-> **核心定位**：極速離線影音去識別化、AI 人臉追蹤、純聲學 VAD 語音標記與智慧聽打工作站。
-> **遵循標準**：全域開發憲法 v8.1（100% 台灣繁體中文、莫蘭迪手帳風格、零外部 FFmpeg 依賴、離線隱私第一）。
-
----
-
-## 1. 核心架構與技術棧約束
-
-- **GUI 框架**：`PySide6` (Qt 6.6+)，採用日系莫蘭迪手帳風格 QSS (`clipmask/gui/styles.py`)。
-- **視訊解碼引擎**：`PyAV` (FFmpeg C Binding)，嚴格精確對齊 PTS 時間戳，相容 VFR 與長 GOP 串流。
-- **解碼管線隔離 (Decoupled Pipeline)**：
-  - `VideoSource`：主畫面播放與拖曳（支援 `seek_fast` 關鍵影格秒刷與 `seek_exact` 精確解碼）。
-  - `ThumbnailExtractor`：獨立低負載懸浮縮圖管線，在時間軸 Hover 時提取 $160\times90$ 縮圖。
-- **AI 視覺模組**：
-  - `FaceDetector` (`models/face/face_detection_yunet_2023mar.onnx`)：YuNet 深度學習人臉偵測，預設門檻 `0.35`，支援遠景小臉、多目標捕捉與 3.0s 動作關聯聚合。
-  - `MicroTracker`：基於 OpenCV CSRT 的手動框選向後追蹤器。
-  - `TrackEvaluator`：關鍵影格 Lerp 線性內插與 25% 安全外擴 Padding 邊界計算。
-- **純聲學 VAD 模組**：
-  - `VoiceActivityDetector`：PyAV 音軌短時 RMS 能量與動態門檻掃描；預設以 50ms 視窗提取人聲活動區間，避免引入 STT 文字辨識。
-- **無損秒出引擎**：
-  - `FastCopyExporter`：純原生 PyAV `add_stream_from_template` 封包轉發，零系統 `ffmpeg.exe` 依賴；實際輸出時間依來源檔、儲存媒體與容器而定。
-- **Single-pass 壓制引擎**：
-  - `RenderExporter`：逐影格套用馬賽克/高斯模糊、繁中字卡燒錄並以 PyAV 壓制輸出。
+本專案遵循目前有效之全域開發憲法；本檔僅定義專案專屬規則與例外。
 
 ---
 
-## 2. 工程規範與嚴禁事項
+## 1. 技術棧與選型邊界
+- **主力架構**：Python 3.11~3.13 + PySide6 (Qt 6.6+) + PyAV (FFmpeg C Binding) + OpenCV ONNX (YuNet)。
+- **技術選型邊界**：
+  - 專案核心深度依賴 Python 的影音解碼、音軌 RMS 能量計算與 ONNX 推論生態系。
+  - **架構合理且成熟，嚴禁因追求 UI 現代化而隨意將桌面 App 遷移改寫為 Tauri 或 Electron**。
+  - 視覺主題一律遵循日系莫蘭迪手帳風格 QSS (`clipmask/gui/styles.py`)。
 
-1. **嚴禁破壞離線安全性**：所有影像、音訊與 AI 運算嚴禁引入任何雲端 API 或外部未授權網路請求。
-2. **字型與 Windows 相容**：字卡與介面字型一律優先使用 `Microsoft JhengHei`（微軟正黑體）與系統預設無襯線字型。
-3. **二進位檔案安全**：音訊、影片、模型與圖片檔案讀寫嚴禁套用文字編碼參數。
-4. **測試覆蓋**：任何核心演算法或 GUI 改動後，必須執行 `pytest tests/ -v` 確保全套測試通過。
+---
+
+## 2. 業務領域與影音去識別化核心邊界
+- **明確區分「三級遮蔽確認狀態」**：
+  1. **AI 已偵測（待查核）**：YuNet 演算法自動掃描之人臉框與初步軌跡。
+  2. **人工已確認（已鎖定）**：經操作人員檢視、修正或以 `K` 鍵標記之關鍵影格（🔷 Keyframes）。
+  3. **可安全匯出（無漏網）**：工作區間（Work Range）內確認無遺漏人臉或轉頭露餡，始可進行壓制。
+- **工作站時間軸與影音管線解耦 (Decoupled Pipeline)**：
+  - **主畫面播放與懸浮縮圖管線完全隔離**：`VideoSource` 負責流暢播放與瞬刷；`ThumbnailExtractor` 負責時間軸 Hover 縮圖（$160\times90$），兩者不得相互阻塞。
+  - **純聲學 VAD 語音活動標記**：以短時 RMS 能量與動態門檻掃描人聲區間，**嚴格避免引入 STT 文字辨識雲端 API**，杜絕錯字地獄與機敏個資上傳風險。
+  - **字幕磁吸與字卡燒錄**：支援 Enter 鍵智慧磁吸語音段，即時渲染手帳字卡，支援單獨匯出 `.srt` 或 Single-pass 壓制燒錄。
+- **匯出安全與防護**：
+  - **壓制匯出 (RenderExporter)**：逐影格套用馬賽克/高斯模糊與字卡，Lerp 線性補間計算安全外擴邊界（Padding 25%）。
+  - **快速剪輯 (FastCopyExporter)**：封包層轉發，零系統 `ffmpeg.exe` 依賴。
+  - **防覆寫命名機制**：自動帶入時間戳記與序號，嚴禁未經確認覆寫原始影音檔案。
+
+---
+
+## 3. 穩定性與離線資安保證
+- **100% 離線機敏隱私保證**：
+  - 本工具專為執法調查、公務新聞與隱私防護打造，所有影音運算與 AI 推論必須 100% 在本機執行，**嚴禁引入任何雲端 API、外部遙測或未授權網路請求**。
+- **編碼防禦**：
+  - 視訊、音訊、ONNX 模型與圖檔讀寫，嚴格禁止套用文字編碼參數。
+
+---
+
+## 4. 核心驗證方式
+- 修改影音解碼、AI 追蹤、VAD 或匯出邏輯後，必須執行自動化單元測試（需以模組方式執行）：
+  ```bash
+  python -m pytest tests/ -q
+  ```
