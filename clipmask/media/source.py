@@ -19,9 +19,9 @@ class VideoSource:
         self.height = self.stream.codec_context.height
         self.time_base = float(self.stream.time_base)
         
-        if self.stream.average_rate:
+        if self.stream.average_rate and 1.0 <= float(self.stream.average_rate) <= 120.0:
             self.fps = float(self.stream.average_rate)
-        elif self.stream.base_rate:
+        elif self.stream.base_rate and 1.0 <= float(self.stream.base_rate) <= 120.0:
             self.fps = float(self.stream.base_rate)
         else:
             self.fps = 30.0

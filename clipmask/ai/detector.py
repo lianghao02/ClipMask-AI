@@ -7,6 +7,7 @@ ClipMask-AI Vision AI Detector (OpenCV YuNet 深度學習 + 連續多目標軌�
    - 自動交由 TrackEvaluator 執行平滑 Lerp 遮蔽！
 """
 import os
+import sys
 import cv2
 import numpy as np
 from typing import List, Tuple, Callable, Optional
@@ -16,8 +17,13 @@ from ..media.source import VideoSource
 class FaceDetector:
     def __init__(self, model_path: Optional[str] = None, conf_threshold: float = 0.35):
         if not model_path:
-            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            base_dir = getattr(sys, "_MEIPASS", None)
+            if not base_dir:
+                base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             model_path = os.path.join(base_dir, "models", "face", "face_detection_yunet_2023mar.onnx")
+            if not os.path.exists(model_path):
+                app_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+                model_path = os.path.join(app_dir, "models", "face", "face_detection_yunet_2023mar.onnx")
             
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"YuNet 人臉模型不存在: {model_path}")

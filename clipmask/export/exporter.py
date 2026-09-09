@@ -12,6 +12,20 @@ from ..media.source import VideoSource
 from ..track.evaluator import TrackEvaluator
 from ..ai.subtitles import SubtitleManager
 
+def _get_canonical_audio_layout(stream) -> str:
+    """將音訊串流聲道轉換為 FFmpeg / PyAV AAC 編碼器認可的正規化 layout 名稱"""
+    channels = getattr(stream, "channels", None)
+    if not channels and hasattr(stream, "layout") and stream.layout:
+        channels = len(stream.layout.channels)
+    if channels == 1:
+        return "mono"
+    elif channels == 6:
+        return "5.1"
+    elif channels == 8:
+        return "7.1"
+    return "stereo"
+
+
 class FastCopyExporter:
     @staticmethod
     def export(source_path: str, in_time: float, out_time: float, output_path: str) -> bool:
@@ -129,7 +143,7 @@ class RenderExporter:
             if audio_input.streams.audio:
                 audio_stream = audio_input.streams.audio[0]
                 audio_rate = audio_stream.codec_context.sample_rate or 48000
-                audio_layout = audio_stream.layout.name if audio_stream.layout else "stereo"
+                audio_layout = _get_canonical_audio_layout(audio_stream)
                 audio_output = output_container.add_stream("aac", rate=audio_rate)
                 audio_output.layout = audio_layout
                 audio_resampler = av.AudioResampler(
