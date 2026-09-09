@@ -345,9 +345,16 @@ class MainWindow(QMainWindow):
         self.lbl_review_summary.setStyleSheet("color: #8a5b20; background: #fff4dc; padding: 5px 7px; border-radius: 5px;")
         grp_layout.addWidget(self.lbl_review_summary)
 
-        self.btn_next_review = QPushButton("下一個待檢查遮蔽")
+        review_btn_row = QHBoxLayout()
+        self.btn_accept_all = QPushButton("✅ 全選同意確認")
+        self.btn_accept_all.setToolTip("將所有遮蔽物件一次全部標記為已確認（免逐項打勾）")
+        self.btn_accept_all.clicked.connect(lambda: self._set_all_tracks_reviewed(True))
+        review_btn_row.addWidget(self.btn_accept_all)
+
+        self.btn_next_review = QPushButton("🔍 下一個待檢查")
         self.btn_next_review.clicked.connect(self._jump_to_next_pending_review)
-        grp_layout.addWidget(self.btn_next_review)
+        review_btn_row.addWidget(self.btn_next_review)
+        grp_layout.addLayout(review_btn_row)
 
         track_btn_layout = QHBoxLayout()
         self.btn_track_forward = QPushButton("🎯 追蹤2秒")
@@ -1051,17 +1058,30 @@ class MainWindow(QMainWindow):
         self._update_review_summary()
         self._update_timeline_state()
 
+    def _set_all_tracks_reviewed(self, reviewed: bool = True):
+        """一次性全選同意確認（或取消全選）所有遮蔽軌跡"""
+        if not self.project.tracks:
+            return
+        for track in self.project.tracks:
+            track.reviewed = reviewed
+        self._refresh_track_list()
+
     def _update_review_summary(self):
         total = len(self.project.tracks)
         reviewed = sum(1 for track in self.project.tracks if track.reviewed)
         pending = total - reviewed
         if not total:
             self.lbl_review_summary.setText("待檢查遮蔽：尚未建立軌跡")
+            self.btn_accept_all.setEnabled(False)
+            self.btn_next_review.setEnabled(False)
         elif pending:
             self.lbl_review_summary.setText(f"待檢查遮蔽：已確認 {reviewed}/{total}，尚有 {pending} 條。")
+            self.btn_accept_all.setEnabled(True)
+            self.btn_next_review.setEnabled(True)
         else:
             self.lbl_review_summary.setText(f"遮蔽人工檢查完成：{reviewed}/{total} 條。")
-        self.btn_next_review.setEnabled(bool(pending))
+            self.btn_accept_all.setEnabled(True)
+            self.btn_next_review.setEnabled(False)
 
     def _jump_to_next_pending_review(self):
         if not self.video_source:

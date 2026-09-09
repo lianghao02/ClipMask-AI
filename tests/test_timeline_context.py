@@ -132,3 +132,31 @@ def test_main_window_modes_and_seek_state(qapp):
     # 驗證 Seek 狀態保護旗標初始化
     assert window._seek_generation >= 0
     assert window._is_seeking is False
+
+def test_set_all_tracks_reviewed(qapp):
+    from clipmask.gui.main_window import MainWindow
+    from clipmask.models.project import Track, MaskConfig, Keyframe
+    window = MainWindow()
+
+    t1 = Track(id="t1", label="人物 1", mask=MaskConfig(), keyframes=[Keyframe(0.0, 0, (10, 10, 20, 20))], reviewed=False)
+    t2 = Track(id="t2", label="人物 2", mask=MaskConfig(), keyframes=[Keyframe(0.0, 0, (30, 30, 20, 20))], reviewed=False)
+    window.project.tracks = [t1, t2]
+    window._refresh_track_list()
+
+    assert not t1.reviewed
+    assert not t2.reviewed
+    assert window.btn_accept_all.isEnabled()
+
+    # 執行全選同意確認
+    window._set_all_tracks_reviewed(True)
+    assert t1.reviewed
+    assert t2.reviewed
+    assert not window.btn_next_review.isEnabled()
+    assert "檢查完成" in window.lbl_review_summary.text()
+
+    # 取消全選
+    window._set_all_tracks_reviewed(False)
+    assert not t1.reviewed
+    assert not t2.reviewed
+    assert window.btn_next_review.isEnabled()
+

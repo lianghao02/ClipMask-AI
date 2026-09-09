@@ -8,7 +8,7 @@ MORANDI_JOURNAL_QSS = """
 QMainWindow, QWidget {
     background-color: #f7f5f0;
     color: #383734;
-    font-family: "Segoe UI", "Microsoft JhengHei", "PingFang TC", sans-serif;
+    font-family: "Segoe UI Emoji", "Segoe UI", "Microsoft JhengHei", "PingFang TC", sans-serif;
     font-size: 12px;
 }
 
