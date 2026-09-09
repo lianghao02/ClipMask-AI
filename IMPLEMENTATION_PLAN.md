@@ -28,5 +28,10 @@
 - [x] 真實影片素材測試與相容性修復（P1 音訊編碼異常、WMV FPS 估算）
 - [x] 清理 Git 誤追蹤之 `__pycache__` 檔案
 - [x] 建立並驗證 Windows Portable 綠色發布版本
-- [x] 更新實作計畫與驗收文件對齊現況
+- [x] 修正播放中 Seek 之 PlaybackWorker 與主線程狀態競爭跳動問題（Generation Token 機制）
+- [x] 單一視窗 4 種直覺工作模式切換（去識別、聽打、剪輯、完整）
+- [x] 文案優化（遮蔽預覽開關、AI 偵測人臉）
+- [x] 新增工作模式與 Seek 保護單元測試（22 passed 100%）
+- [x] 更新 CHANGELOG.md、version.txt (v1.1.0) 與實作計畫
 - [x] 全套回歸測試驗證與 Git Commit / Push
+

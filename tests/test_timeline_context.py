@@ -59,3 +59,76 @@ def test_timeline_edit_context_display(qapp):
     timeline.set_edit_context("✂", "影片工作區間", 0.0, 10.0, "重設全片")
     assert "✂" in timeline.lbl_edit_context.text()
     assert timeline.btn_reset_range.text() == "重設全片"
+
+def test_timeline_modes(qapp):
+    timeline = TimelineWidget()
+    
+    # 遮蔽模式 (mask)：隱藏聽打輸入，顯示關鍵影格按鈕
+    timeline.set_mode("mask")
+    assert timeline.widget_transcript.isHidden()
+    assert not timeline.btn_toggle_kf.isHidden()
+    assert not timeline.btn_in.isHidden()
+
+    # 聽打模式 (transcribe)：顯示聽打輸入，隱藏關鍵影格按鈕
+    timeline.set_mode("transcribe")
+    assert not timeline.widget_transcript.isHidden()
+    assert timeline.btn_toggle_kf.isHidden()
+    assert not timeline.btn_in.isHidden()
+
+    # 快速剪輯模式 (cut)：隱藏聽打輸入與關鍵影格按鈕，保留 In/Out/Reset
+    timeline.set_mode("cut")
+    assert timeline.widget_transcript.isHidden()
+    assert timeline.btn_toggle_kf.isHidden()
+    assert not timeline.btn_in.isHidden()
+    assert not timeline.btn_out.isHidden()
+    assert not timeline.btn_reset_range.isHidden()
+
+    # 完整工作站 (full)：全部顯示
+    timeline.set_mode("full")
+    assert not timeline.widget_transcript.isHidden()
+    assert not timeline.btn_toggle_kf.isHidden()
+    assert not timeline.btn_in.isHidden()
+
+def test_main_window_modes_and_seek_state(qapp):
+    from clipmask.gui.main_window import MainWindow
+    window = MainWindow()
+    
+    # 預設模式為 mask (人臉去識別)
+    assert window.current_work_mode == "mask"
+    assert window.btn_mode_mask.isChecked()
+    assert not window.grp_tracks.isHidden()
+    assert window.grp_subs.isHidden()
+    assert not window.btn_ai_detect.isHidden()
+    assert window.btn_fast_export.isHidden()
+
+    # 切換至 transcribe (字幕聽打)
+    window.set_work_mode("transcribe")
+    assert window.current_work_mode == "transcribe"
+    assert window.btn_mode_transcribe.isChecked()
+    assert window.grp_tracks.isHidden()
+    assert not window.grp_subs.isHidden()
+    assert window.btn_ai_detect.isHidden()
+    assert not window.timeline.widget_transcript.isHidden()
+
+    # 切換至 cut (快速剪輯)
+    window.set_work_mode("cut")
+    assert window.current_work_mode == "cut"
+    assert window.btn_mode_cut.isChecked()
+    assert window.right_widget.isHidden()
+    assert not window.btn_fast_export.isHidden()
+    assert window.btn_render_export.isHidden()
+
+    # 切換至 full (完整工作站)
+    window.set_work_mode("full")
+    assert window.current_work_mode == "full"
+    assert window.btn_mode_full.isChecked()
+    assert not window.right_widget.isHidden()
+    assert not window.grp_tracks.isHidden()
+    assert not window.grp_subs.isHidden()
+    assert not window.btn_ai_detect.isHidden()
+    assert not window.btn_fast_export.isHidden()
+    assert not window.btn_render_export.isHidden()
+
+    # 驗證 Seek 狀態保護旗標初始化
+    assert window._seek_generation >= 0
+    assert window._is_seeking is False

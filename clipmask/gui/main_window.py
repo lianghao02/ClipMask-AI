@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QFileDialog, QListWidget, QListWidgetItem, QLabel, QGroupBox,
     QMessageBox, QSplitter, QProgressBar, QComboBox, QSpinBox,
-    QLineEdit, QProgressDialog
+    QLineEdit, QProgressDialog, QButtonGroup
 )
 from PySide6.QtGui import QImage, QKeySequence, QShortcut, QDragEnterEvent, QDropEvent, QIcon, QColor
 from PySide6.QtCore import Qt, QThread, Signal, Slot, QUrl
@@ -186,6 +186,12 @@ class MainWindow(QMainWindow):
         self.audio_output = QAudioOutput(self)
         self.media_player = QMediaPlayer(self)
         self.media_player.setAudioOutput(self.audio_output)
+
+        # 播放 vs Seek 狀態競爭保護機制
+        self._seek_generation = 0
+        self._is_seeking = False
+        self._resume_after_scrub = False
+        self.current_work_mode = "mask"
         
         self.init_ui()
         self._update_review_summary()
@@ -206,7 +212,7 @@ class MainWindow(QMainWindow):
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(8)
 
-        # 上方功能列 (極致直覺化文字)
+        # 上方功能列 (模式切換 + 核心按鈕)
         top_bar = QHBoxLayout()
         self.btn_open = QPushButton("📂 開啟 / 拖入影片")
         self.btn_open.setToolTip("點擊開啟檔案，或直接把影片檔案拖曳至視窗內")
@@ -214,18 +220,59 @@ class MainWindow(QMainWindow):
         self.btn_open.clicked.connect(self.open_video)
         top_bar.addWidget(self.btn_open)
 
-        self.btn_ai_detect = QPushButton("🤖 AI 偵測區間人臉")
+        top_bar.addSpacing(6)
+
+        # ── 4 種工作模式切換按鈕組 ──
+        self.mode_group = QButtonGroup(self)
+        self.mode_group.setExclusive(True)
+
+        self.btn_mode_mask = QPushButton("🎭 人臉去識別")
+        self.btn_mode_mask.setCheckable(True)
+        self.btn_mode_mask.setProperty("class", "mode-btn")
+        self.btn_mode_mask.setChecked(True)
+        self.btn_mode_mask.setToolTip("人臉偵測、軌跡追蹤、遮蔽樣式調整與去識別匯出")
+        self.btn_mode_mask.clicked.connect(lambda: self.set_work_mode("mask"))
+        self.mode_group.addButton(self.btn_mode_mask)
+        top_bar.addWidget(self.btn_mode_mask)
+
+        self.btn_mode_transcribe = QPushButton("🎙️ 字幕聽打")
+        self.btn_mode_transcribe.setCheckable(True)
+        self.btn_mode_transcribe.setProperty("class", "mode-btn")
+        self.btn_mode_transcribe.setToolTip("VAD 語音活動對齊、聽打文字、字幕拖曳微調與 SRT 匯出")
+        self.btn_mode_transcribe.clicked.connect(lambda: self.set_work_mode("transcribe"))
+        self.mode_group.addButton(self.btn_mode_transcribe)
+        top_bar.addWidget(self.btn_mode_transcribe)
+
+        self.btn_mode_cut = QPushButton("✂️ 快速剪輯")
+        self.btn_mode_cut.setCheckable(True)
+        self.btn_mode_cut.setProperty("class", "mode-btn")
+        self.btn_mode_cut.setToolTip("專注畫面與時間軸，設定 In/Out 點無損秒出")
+        self.btn_mode_cut.clicked.connect(lambda: self.set_work_mode("cut"))
+        self.mode_group.addButton(self.btn_mode_cut)
+        top_bar.addWidget(self.btn_mode_cut)
+
+        self.btn_mode_full = QPushButton("🎛️ 完整工作站")
+        self.btn_mode_full.setCheckable(True)
+        self.btn_mode_full.setProperty("class", "mode-btn")
+        self.btn_mode_full.setToolTip("展開全部控制項（去識別、聽打、剪輯）")
+        self.btn_mode_full.clicked.connect(lambda: self.set_work_mode("full"))
+        self.mode_group.addButton(self.btn_mode_full)
+        top_bar.addWidget(self.btn_mode_full)
+
+        top_bar.addSpacing(12)
+
+        self.btn_ai_detect = QPushButton("🤖 AI 偵測人臉")
         self.btn_ai_detect.setToolTip("自動偵測所選時間區間內的所有人臉並建立連續追蹤軌跡")
         self.btn_ai_detect.setObjectName("btn_ai")
         self.btn_ai_detect.clicked.connect(self.run_ai_face_detection)
         top_bar.addWidget(self.btn_ai_detect)
 
-        self.btn_toggle_preview = QPushButton("👁️ 真實打碼預覽: 關")
+        self.btn_toggle_preview = QPushButton("👁️ 遮蔽預覽: 關")
         self.btn_toggle_preview.setToolTip("切換是否直接在畫面顯示真實馬賽克/高斯模糊效果")
         self.btn_toggle_preview.clicked.connect(self._toggle_real_mask_preview)
         top_bar.addWidget(self.btn_toggle_preview)
 
-        top_bar.addSpacing(15)
+        top_bar.addSpacing(10)
 
         # 核心主按鈕：匯出馬賽克去識別影片
         self.btn_render_export = QPushButton("🛡️ 匯出馬賽克影片 (壓制遮蔽)")
@@ -278,14 +325,14 @@ class MainWindow(QMainWindow):
         splitter.addWidget(left_widget)
 
         # ── 右側：遮蔽管理 + 聽打字幕面板 ──
-        right_widget = QWidget()
-        right_layout = QVBoxLayout(right_widget)
+        self.right_widget = QWidget()
+        right_layout = QVBoxLayout(self.right_widget)
         right_layout.setContentsMargins(6, 0, 6, 0)
         right_layout.setSpacing(10)
 
         # 1. 遮蔽物件清單
-        grp_tracks = QGroupBox("📋 遮蔽人物與軌跡 (Tracks)")
-        grp_layout = QVBoxLayout(grp_tracks)
+        self.grp_tracks = QGroupBox("📋 遮蔽人物與軌跡 (Tracks)")
+        grp_layout = QVBoxLayout(self.grp_tracks)
         
         self.track_list = QListWidget()
         self.track_list.setMaximumHeight(125)
@@ -334,11 +381,11 @@ class MainWindow(QMainWindow):
         row_style.addWidget(self.spin_strength)
         grp_layout.addLayout(row_style)
 
-        right_layout.addWidget(grp_tracks)
+        right_layout.addWidget(self.grp_tracks)
 
         # 2. 即時聽打字幕專屬工作站
-        grp_subs = QGroupBox("🎙️ 即時聽打字幕 (Transcribe)")
-        sub_layout = QVBoxLayout(grp_subs)
+        self.grp_subs = QGroupBox("🎙️ 即時聽打字幕 (Transcribe)")
+        sub_layout = QVBoxLayout(self.grp_subs)
 
         lbl_sub_focus = QLabel("字幕輸入列位於時間軸正下方；點選字幕可由下方共用控制列或時間軸手柄微調起訖。")
         lbl_sub_focus.setWordWrap(True)
@@ -367,13 +414,15 @@ class MainWindow(QMainWindow):
         lbl_sub_hint.setStyleSheet("color: #78716c; font-size: 11px; margin-top: 4px; line-height: 1.4;")
         sub_layout.addWidget(lbl_sub_hint)
 
-        right_layout.addWidget(grp_subs)
+        right_layout.addWidget(self.grp_subs)
 
-        splitter.addWidget(right_widget)
+        splitter.addWidget(self.right_widget)
         splitter.setStretchFactor(0, 4)
         splitter.setStretchFactor(1, 1)
 
         main_layout.addWidget(splitter)
+        self.set_work_mode("mask")
+
 
     # ──── 全視窗拖曳開檔 ────
     def dragEnterEvent(self, event: QDragEnterEvent):
@@ -424,9 +473,59 @@ class MainWindow(QMainWindow):
         target_t = max(0.0, min(self.video_source.duration, self.video_source.current_time + dt))
         self.seek_to(target_t)
 
+    def set_work_mode(self, mode: str):
+        """切換 4 種直覺工作模式 (單一視窗元件開合)
+        mode: 'mask' | 'transcribe' | 'cut' | 'full'
+        """
+        self.current_work_mode = mode
+
+        # 同步按鈕勾選狀態
+        self.btn_mode_mask.setChecked(mode == "mask")
+        self.btn_mode_transcribe.setChecked(mode == "transcribe")
+        self.btn_mode_cut.setChecked(mode == "cut")
+        self.btn_mode_full.setChecked(mode == "full")
+
+        # 時間軸控制項開合
+        self.timeline.set_mode(mode)
+
+        if mode == "mask":
+            self.btn_ai_detect.show()
+            self.btn_toggle_preview.show()
+            self.btn_render_export.show()
+            self.btn_fast_export.hide()
+
+            self.right_widget.show()
+            self.grp_tracks.show()
+            self.grp_subs.hide()
+        elif mode == "transcribe":
+            self.btn_ai_detect.hide()
+            self.btn_toggle_preview.hide()
+            self.btn_render_export.show()
+            self.btn_fast_export.hide()
+
+            self.right_widget.show()
+            self.grp_tracks.hide()
+            self.grp_subs.show()
+        elif mode == "cut":
+            self.btn_ai_detect.hide()
+            self.btn_toggle_preview.hide()
+            self.btn_render_export.hide()
+            self.btn_fast_export.show()
+
+            self.right_widget.hide()
+        else:  # full
+            self.btn_ai_detect.show()
+            self.btn_toggle_preview.show()
+            self.btn_render_export.show()
+            self.btn_fast_export.show()
+
+            self.right_widget.show()
+            self.grp_tracks.show()
+            self.grp_subs.show()
+
     def _toggle_real_mask_preview(self):
         self.video_view.show_real_mask_preview = not self.video_view.show_real_mask_preview
-        txt = "👁️ 真實打碼預覽: 開" if self.video_view.show_real_mask_preview else "👁️ 真實打碼預覽: 關"
+        txt = "👁️ 遮蔽預覽: 開" if self.video_view.show_real_mask_preview else "👁️ 遮蔽預覽: 關"
         self.btn_toggle_preview.setText(txt)
         if self.current_frame_rgb is not None and self.video_source:
             self.video_view.update_frame_data(self.current_frame_rgb, self.project.tracks, self.project.subtitles, self.video_source.current_time)
@@ -501,6 +600,14 @@ class MainWindow(QMainWindow):
         """極速粗略跳轉 (滑鼠拖曳時間軸時使用，0 延遲秒刷)"""
         if not self.video_source:
             return
+        # 若播放中進行快速拖曳 Seek，暫停播放以防雙執行緒競爭
+        if self.playback_worker and self.playback_worker.isRunning():
+            self._resume_after_scrub = True
+            self._stop_playback()
+
+        self._seek_generation += 1
+        self._is_seeking = True
+
         frame = self.video_source.seek_fast(seconds)
         if frame is not None:
             self.current_frame_rgb = frame
@@ -515,9 +622,18 @@ class MainWindow(QMainWindow):
             self._update_timeline_state()
 
     def seek_to(self, seconds: float):
-        """精準跳轉 (滑鼠放開或指定秒數時使用)"""
+        """精準跳轉 (滑鼠放開、點擊時間軸或指定秒數時使用)"""
         if not self.video_source:
             return
+        # 檢查是否原本在播放中
+        was_playing = bool(self.playback_worker and self.playback_worker.isRunning())
+        should_resume = was_playing or getattr(self, "_resume_after_scrub", False)
+        if was_playing:
+            self._stop_playback()
+
+        self._seek_generation += 1
+        self._is_seeking = False
+
         frame = self.video_source.seek_exact(seconds)
         if frame is not None:
             self.current_frame_rgb = frame
@@ -535,13 +651,15 @@ class MainWindow(QMainWindow):
         if self.media_player:
             self.media_player.setPosition(int(round(seconds * 1000)))
 
-        if getattr(self, "_resume_after_scrub", False):
-            self._resume_after_scrub = False
+        self._resume_after_scrub = False
+        if should_resume:
             self._start_playback()
 
     def _begin_timeline_scrub(self):
-        self._resume_after_scrub = bool(self.playback_worker and self.playback_worker.isRunning())
-        if self._resume_after_scrub:
+        self._is_seeking = True
+        self._seek_generation += 1
+        if self.playback_worker and self.playback_worker.isRunning():
+            self._resume_after_scrub = True
             self._stop_playback()
 
     def step_frame(self, delta: int):
@@ -572,16 +690,22 @@ class MainWindow(QMainWindow):
             self.media_player.setPosition(int(round(cur_t * 1000)))
             self.media_player.play()
 
+        self._seek_generation += 1
+        current_gen = self._seek_generation
+        self._is_seeking = False
+
         self.playback_worker = PlaybackWorker(
             self.video_source.video_path,
             cur_t,
             self.video_source.fps
         )
-        self.playback_worker.frame_ready.connect(self._on_worker_frame)
+        self.playback_worker.frame_ready.connect(lambda f, t, g=current_gen: self._on_worker_frame(f, t, g))
         self.playback_worker.finished.connect(self._on_worker_finished)
         self.playback_worker.start()
+        self.timeline.set_playing_state(True)
 
     def _stop_playback(self):
+        self._seek_generation += 1
         if self.media_player:
             self.media_player.pause()
         if self.playback_worker and self.playback_worker.isRunning():
@@ -590,7 +714,13 @@ class MainWindow(QMainWindow):
         self.timeline.set_playing_state(False)
 
     @Slot(np.ndarray, float)
-    def _on_worker_frame(self, frame_rgb: np.ndarray, current_time: float):
+    def _on_worker_frame(self, frame_rgb: np.ndarray, current_time: float, generation: int = -1):
+        # 阻斷過期訊號與 Seeking 期間干擾
+        if generation != -1 and generation != self._seek_generation:
+            return
+        if self._is_seeking:
+            return
+
         self.current_frame_rgb = frame_rgb
         if self.video_source:
             self.video_source.current_time = current_time

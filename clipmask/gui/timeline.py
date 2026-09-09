@@ -196,8 +196,7 @@ class TimelineTrackCanvas(QWidget):
             target_t = max(0.0, min(self.duration, self.current_time + direction * step_sec))
             
             self.seek_started.emit()
-            self.seek_fast_requested.emit(target_t)
-            self.seek_exact_requested.emit(target_t)
+            self.seek_requested.emit(target_t)
             
         event.accept()
 
@@ -530,7 +529,9 @@ class TimelineWidget(QWidget):
         self.canvas.subtitle_range_adjusted.connect(self.subtitle_range_adjusted.emit)
         main_layout.addWidget(self.canvas)
 
-        transcript_layout = QHBoxLayout()
+        self.widget_transcript = QWidget()
+        transcript_layout = QHBoxLayout(self.widget_transcript)
+        transcript_layout.setContentsMargins(0, 0, 0, 0)
         transcript_layout.addWidget(QLabel("🎙 聽打："))
         self.edit_transcript = QLineEdit()
         self.edit_transcript.setPlaceholderText("⌨️ 邊聽邊打字，按 Enter 自動建立這句字幕 (VAD 智慧磁吸)...")
@@ -539,7 +540,7 @@ class TimelineWidget(QWidget):
         btn_add = QPushButton("新增 (Enter)")
         btn_add.clicked.connect(lambda: self.transcript_submitted.emit(self.edit_transcript.text()))
         transcript_layout.addWidget(btn_add)
-        main_layout.addLayout(transcript_layout)
+        main_layout.addWidget(self.widget_transcript)
 
         self.lbl_edit_context = QLabel("目前編輯：✂ 影片工作區間")
         self.lbl_edit_context.setStyleSheet("font-weight: 600; color: #4a6882; padding: 2px 4px;")
@@ -727,3 +728,44 @@ class TimelineWidget(QWidget):
     def set_playing_state(self, playing: bool):
         self.is_playing = playing
         self.btn_play.setText("⏸ 暫停" if self.is_playing else "▶ 播放")
+
+    def set_mode(self, mode: str):
+        """依據工作模式切換時間軸控制項可見性
+        mode: 'mask' | 'transcribe' | 'cut' | 'full'
+        """
+        if mode == "mask":
+            self.widget_transcript.hide()
+            self.lbl_edit_context.show()
+            self.btn_prev_kf.show()
+            self.btn_toggle_kf.show()
+            self.btn_next_kf.show()
+            self.btn_in.show()
+            self.btn_out.show()
+            self.btn_reset_range.show()
+        elif mode == "transcribe":
+            self.widget_transcript.show()
+            self.lbl_edit_context.show()
+            self.btn_prev_kf.hide()
+            self.btn_toggle_kf.hide()
+            self.btn_next_kf.hide()
+            self.btn_in.show()
+            self.btn_out.show()
+            self.btn_reset_range.show()
+        elif mode == "cut":
+            self.widget_transcript.hide()
+            self.lbl_edit_context.show()
+            self.btn_prev_kf.hide()
+            self.btn_toggle_kf.hide()
+            self.btn_next_kf.hide()
+            self.btn_in.show()
+            self.btn_out.show()
+            self.btn_reset_range.show()
+        else:  # full
+            self.widget_transcript.show()
+            self.lbl_edit_context.show()
+            self.btn_prev_kf.show()
+            self.btn_toggle_kf.show()
+            self.btn_next_kf.show()
+            self.btn_in.show()
+            self.btn_out.show()
+            self.btn_reset_range.show()

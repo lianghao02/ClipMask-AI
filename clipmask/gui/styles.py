@@ -1,4 +1,4 @@
-﻿"""
+"""
 ClipMask-AI Modern Morandi Journal / Handcraft Style (現代莫蘭迪日系手帳風格)
 燕麥奶茶底色、手作卡片感、鼠尾草綠、霧面陶土紅與溫潤暖灰。
 """
@@ -62,6 +62,26 @@ QPushButton#btn_ai {
 }
 QPushButton#btn_ai:hover {
     background-color: #4c6a85;
+}
+
+/* 工作模式切換按鈕 */
+QPushButton.mode-btn {
+    background-color: #f0ebe1;
+    color: #5c5850;
+    border: 1px solid #d8d2c5;
+    border-radius: 6px;
+    padding: 5px 12px;
+    font-weight: 600;
+}
+QPushButton.mode-btn:hover {
+    background-color: #e5dfd3;
+    color: #2e2c28;
+}
+QPushButton.mode-btn:checked {
+    background-color: #4a6882;
+    color: #ffffff;
+    border: 1px solid #3d556b;
+    font-weight: bold;
 }
 
 /* 手帳卡片面板 (GroupBox) */
