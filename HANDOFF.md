@@ -1,7 +1,7 @@
 # HANDOFF
 
 ## 目前狀態
-進行中（已完成本輪實作與驗證，尚未提交／推送）
+可交付（v1.1.0 已正式發布；進入 Stable / Maintenance）
 
 ## 本輪目標
 修正遮罩重複外擴、改善 Tracks／檢查區操作空間、清單選取與畫面框同步高亮。
@@ -18,7 +18,7 @@
 ## 刻意未修改
 - 未更換 YuNet／未調整全域信心閾值；誤抓由人工高亮後刪除整條軌跡。
 - 未重構影音核心、RenderExporter 管線、timeline 或全域 QSS。
-- 未建立新版執行檔；未 commit、push、force push。
+- 未更動 AI 模型、核心影音管線或無關 P3；發布後不再擴大功能。
 
 ## 驗證結果
 ### 已執行
@@ -28,17 +28,18 @@
 - 指定影片原始證據：80 秒 YuNet 偵測到真正人臉約 `(17,283,237,280)` 信心 0.795，另有手部誤抓約 `(681,290,169,240)` 信心 0.373。
 
 ### 尚未驗證
-- 未以使用者逐格人工判定所有影片區間的人臉覆蓋；目前實測僅抽查指定片段與自動流程。
+- 未以使用者逐格人工判定所有影片區間的人臉覆蓋；目前實測僅抽查代表性片段與自動流程。
 - 未在真實硬體顯示器上驗證 DPI／系統縮放。
 
 ### 已知風險
 - YuNet 仍可能產生低信心誤抓或漏抓；為避免漏臉，本輪保留候選，使用者需逐條確認後刪除誤抓。
 
 ## Git 狀態
-- Commit：未提交（基線 `dd648b6`）
-- Push：否
-- Working Tree：Modified（本輪異動）
-- Branch：master；本機較 `origin/master` 超前既有 1 筆提交；GitHub Release 查核最新為 v1.0.0，本機版本 v1.1.0。
+- Commit：`91e4c70 release: finalize ClipMask-AI v1.1.0`
+- Push：是（`master` 已同步至 `origin/master`）
+- Working Tree：Clean（發布提交後）
+- Branch：master；Tag `v1.1.0` 已推送。
+- Release：<https://github.com/lianghao02/ClipMask-AI/releases/tag/v1.1.0>，Portable Asset `ClipMask-AI-v1.1.0-Portable.zip`（167,572,893 bytes；SHA-256 `c768de085b2ade21d7a27f49fcce7d983b64ea9dc7f387799743d1b17a10e251`）。
 
 ## 下一步
-若確認本輪 diff，可由使用者指定是否提交／推送；若要發布，先建立 Windows Portable 並重新執行交付檢查。
+僅處理已重現的高嚴重度問題或安全修正；任何功能擴張另開版本規劃。
