@@ -4,13 +4,23 @@ ClipMask-AI Track Evaluator
 給定 Track 與 Timestamp (秒數)，計算出該時刻經過時間插值、Padding 膨脹與畫面邊界 Clamp 後的最終像素遮蔽矩形。
 """
 from typing import Optional, Tuple, List
+import math
 from ..models.project import Track, Keyframe
 
 class TrackEvaluator:
+    MAX_PADDING = 0.25  # 每邊最多外擴原始框的 25%，禁止由已外擴框累積放大
+
     @staticmethod
     def evaluate_track_at(track: Track, current_time: float, video_w: int, video_h: int) -> Optional[Tuple[int, int, int, int]]:
+        rect = TrackEvaluator.evaluate_raw_rect_at(track, current_time)
+        if rect is None:
+            return None
+        return TrackEvaluator.apply_padding_and_clamp(rect, track.mask.padding, video_w, video_h)
+
+    @staticmethod
+    def evaluate_raw_rect_at(track: Track, current_time: float) -> Optional[Tuple[int, int, int, int]]:
         """
-        計算特定時間點 track 的遮蔽矩形 [x, y, w, h]。
+        取得未外擴的插值框；編輯與追蹤回存只能使用此框，避免重複 padding。
         若時間超出 keyframe 範圍或 track 停用，回傳 None。
         """
         if not track.enabled or not track.keyframes:
@@ -20,7 +30,7 @@ class TrackEvaluator:
         # 若只有一個 keyframe，在前後 1 秒內有效（單點遮蔽）
         if len(kfs) == 1:
             if abs(current_time - kfs[0].time) <= 1.0:
-                return TrackEvaluator.apply_padding_and_clamp(kfs[0].rect_px, track.mask.padding, video_w, video_h)
+                return kfs[0].rect_px
             return None
         
         # 超出起訖範圍則不顯示
@@ -50,8 +60,7 @@ class TrackEvaluator:
             ih = h1 + alpha * (h2 - h1)
             interpolated_rect = (int(round(ix)), int(round(iy)), int(round(iw)), int(round(ih)))
         
-        # 套用 Padding 膨脹與 Clamp 邊界限制
-        return TrackEvaluator.apply_padding_and_clamp(interpolated_rect, track.mask.padding, video_w, video_h)
+        return interpolated_rect
 
     @staticmethod
     def apply_padding_and_clamp(rect: Tuple[int, int, int, int], padding: float, video_w: int, video_h: int) -> Tuple[int, int, int, int]:
@@ -59,27 +68,16 @@ class TrackEvaluator:
         四周等比例增加 padding (例如 padding=0.15 代表四周各外擴 15% 的寬高)，並鉗位在影片範圍內
         """
         x, y, w, h = rect
+        padding = min(TrackEvaluator.MAX_PADDING, max(0.0, padding))
         pad_w = w * padding
         pad_h = h * padding
         
-        # 計算外擴後的座標
-        nx = x - pad_w
-        ny = y - pad_h
-        nw = w + 2 * pad_w
-        nh = h + 2 * pad_h
-        
-        # Clamp 邊界防護
-        clamped_x = max(0, int(round(nx)))
-        clamped_y = max(0, int(round(ny)))
-        
-        # 確保寬高不超過右下邊界
-        max_w = video_w - clamped_x
-        max_h = video_h - clamped_y
-        
-        clamped_w = max(1, min(max_w, int(round(nw))))
-        clamped_h = max(1, min(max_h, int(round(nh))))
-        
-        return (clamped_x, clamped_y, clamped_w, clamped_h)
+        # 分別裁切四邊，避免左上溢出的寬高被平移到右下而誤遮更多區域。
+        left = min(video_w, max(0, math.floor(x - pad_w)))
+        top = min(video_h, max(0, math.floor(y - pad_h)))
+        right = min(video_w, max(0, math.ceil(x + w + pad_w)))
+        bottom = min(video_h, max(0, math.ceil(y + h + pad_h)))
+        return (left, top, max(0, right - left), max(0, bottom - top))
 
     @staticmethod
     def evaluate_all_tracks_at(tracks: List[Track], current_time: float, video_w: int, video_h: int) -> List[Tuple[Track, Tuple[int, int, int, int]]]:

@@ -53,11 +53,12 @@ class FaceDetector:
             for face in faces:
                 x, y, w, h = face[:4]
                 # 轉為 int 與邊界保護
-                ix = max(0, min(w_img - 1, int(round(x))))
-                iy = max(0, min(h_img - 1, int(round(y))))
-                iw = max(8, min(w_img - ix, int(round(w))))
-                ih = max(8, min(h_img - iy, int(round(h))))
-                results.append((ix, iy, iw, ih))
+                ix = max(0, min(w_img, int(np.floor(x))))
+                iy = max(0, min(h_img, int(np.floor(y))))
+                right = max(0, min(w_img, int(np.ceil(x + w))))
+                bottom = max(0, min(h_img, int(np.ceil(y + h))))
+                if right > ix and bottom > iy:
+                    results.append((ix, iy, right - ix, bottom - iy))
                 
         return results
 

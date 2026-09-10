@@ -60,11 +60,11 @@ def test_padding_clamp_boundaries():
     # 測試靠近左上角超出
     rect = (5, 5, 50, 50)
     clamped = TrackEvaluator.apply_padding_and_clamp(rect, padding=0.2, video_w=100, video_h=100)
-    # pad_w = 10, pad_h = 10 -> nx = -5, ny = -5 -> clamped x=0, y=0, w=70, h=70
+    # 四邊分別裁切：右下仍為 65，不把左上裁掉的 5px 加到另一邊。
     assert clamped[0] == 0
     assert clamped[1] == 0
-    assert clamped[2] == 70
-    assert clamped[3] == 70
+    assert clamped[2] == 65
+    assert clamped[3] == 65
 
 def test_video_source_with_synthetic_video(tmp_path):
     video_file = str(tmp_path / "test.mp4")

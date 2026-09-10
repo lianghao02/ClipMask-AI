@@ -8,6 +8,7 @@ import numpy as np
 from typing import Tuple, List, Optional, Callable
 from ..models.project import Track, Keyframe
 from ..media.source import VideoSource
+from .evaluator import TrackEvaluator
 
 class MicroTracker:
     @staticmethod
@@ -23,12 +24,11 @@ class MicroTracker:
         if not track.keyframes:
             return False
 
-        # 以最靠近當前時間點的 keyframe 作為起始框
+        # 以目前時間的未外擴框啟動，包含該時間點的人工修正。
         cur_t = video_source.current_time
-        kf_start = track.keyframes[-1]
-        for kf in track.keyframes:
-            if kf.time <= cur_t:
-                kf_start = kf
+        start_rect = TrackEvaluator.evaluate_raw_rect_at(track, cur_t)
+        if start_rect is None:
+            return False
 
         start_time = cur_t
         end_time = min(video_source.duration, start_time + duration_sec)
@@ -46,7 +46,7 @@ class MicroTracker:
         except AttributeError:
             tracker = cv2.TrackerMIL_create()
             
-        x, y, w, h = kf_start.rect_px
+        x, y, w, h = start_rect
         # 防護：確保 bounding box 位於畫面內
         h_img, w_img = frame_bgr.shape[:2]
         x = max(0, min(w_img - 1, x))

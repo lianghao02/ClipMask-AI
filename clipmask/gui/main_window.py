@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QFileDialog, QListWidget, QListWidgetItem, QLabel, QGroupBox,
     QMessageBox, QSplitter, QProgressBar, QComboBox, QSpinBox,
-    QLineEdit, QProgressDialog, QButtonGroup
+    QLineEdit, QProgressDialog, QButtonGroup, QScrollArea, QFrame
 )
 from PySide6.QtGui import QImage, QKeySequence, QShortcut, QDragEnterEvent, QDropEvent, QIcon, QColor
 from PySide6.QtCore import Qt, QThread, Signal, Slot, QUrl
@@ -288,7 +288,17 @@ class MainWindow(QMainWindow):
         top_bar.addWidget(self.btn_fast_export)
 
         top_bar.addStretch()
-        left_layout.addLayout(top_bar)
+        # 窄視窗時只捲動工具列，避免完整工作站按鈕把整個視窗撐出螢幕。
+        toolbar_widget = QWidget()
+        top_bar.setContentsMargins(0, 0, 0, 0)
+        toolbar_widget.setLayout(top_bar)
+        self.toolbar_scroll = QScrollArea()
+        self.toolbar_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.toolbar_scroll.setWidgetResizable(True)
+        self.toolbar_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.toolbar_scroll.setWidget(toolbar_widget)
+        self.toolbar_scroll.setFixedHeight(toolbar_widget.sizeHint().height() + self.toolbar_scroll.horizontalScrollBar().sizeHint().height())
+        left_layout.addWidget(self.toolbar_scroll)
 
         self.lbl_safety_status = QLabel("⚪ 請先載入影片，再建立或檢查遮蔽軌跡。")
         self.lbl_safety_status.setWordWrap(True)
@@ -303,6 +313,8 @@ class MainWindow(QMainWindow):
 
         # 專業手帳時間軸控制器 (支援滑鼠拖拉選區間)
         self.timeline = TimelineWidget()
+        # 窄視窗允許時間文字換行，仍保留完整時間，不擠壓右側檢查按鈕。
+        self.timeline.lbl_time.setWordWrap(True)
         self.timeline.play_toggled.connect(self._on_play_toggled)
         self.timeline.seek_requested.connect(self.seek_to)
         self.timeline.seek_fast_requested.connect(self.seek_to_fast)
@@ -335,10 +347,11 @@ class MainWindow(QMainWindow):
         grp_layout = QVBoxLayout(self.grp_tracks)
         
         self.track_list = QListWidget()
-        self.track_list.setMaximumHeight(125)
+        self.track_list.setMinimumHeight(160)
+        self.track_list.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
         self.track_list.currentRowChanged.connect(self._on_track_selection_changed)
         self.track_list.itemChanged.connect(self._on_track_review_changed)
-        grp_layout.addWidget(self.track_list)
+        grp_layout.addWidget(self.track_list, stretch=1)
 
         self.lbl_review_summary = QLabel("待檢查遮蔽：尚未建立軌跡")
         self.lbl_review_summary.setWordWrap(True)
@@ -388,7 +401,11 @@ class MainWindow(QMainWindow):
         row_style.addWidget(self.spin_strength)
         grp_layout.addLayout(row_style)
 
-        right_layout.addWidget(self.grp_tracks)
+        self.review_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.review_splitter.setChildrenCollapsible(False)
+        self.review_splitter.setHandleWidth(8)
+        self.review_splitter.addWidget(self.grp_tracks)
+        right_layout.addWidget(self.review_splitter)
 
         # 2. 即時聽打字幕專屬工作站
         self.grp_subs = QGroupBox("🎙️ 即時聽打字幕 (Transcribe)")
@@ -421,7 +438,9 @@ class MainWindow(QMainWindow):
         lbl_sub_hint.setStyleSheet("color: #78716c; font-size: 11px; margin-top: 4px; line-height: 1.4;")
         sub_layout.addWidget(lbl_sub_hint)
 
-        right_layout.addWidget(self.grp_subs)
+        self.review_splitter.addWidget(self.grp_subs)
+        self.review_splitter.setStretchFactor(0, 3)
+        self.review_splitter.setStretchFactor(1, 2)
 
         splitter.addWidget(self.right_widget)
         splitter.setStretchFactor(0, 4)
@@ -867,7 +886,7 @@ class MainWindow(QMainWindow):
         cur_t = self.video_source.current_time
         
         from ..track.evaluator import TrackEvaluator
-        evaluated = TrackEvaluator.evaluate_track_at(track, cur_t, self.video_source.width, self.video_source.height)
+        evaluated = TrackEvaluator.evaluate_raw_rect_at(track, cur_t)
         if not evaluated:
             QMessageBox.warning(self, "提示", f"當前時間 ({cur_t:.2f}s) 不在該人物的有效範圍內，無法截斷。")
             return
@@ -876,7 +895,7 @@ class MainWindow(QMainWindow):
         track.keyframes = [kf for kf in track.keyframes if kf.time < cur_t - 0.05]
         tb = self.video_source.time_base
         pts = int(round(cur_t / float(tb))) if tb else 0
-        track.add_or_update_keyframe(cur_t, pts, evaluated, source="split")
+        track.add_or_update_keyframe(cur_t, rect_px=evaluated, pts=pts, source="split")
         
         self._refresh_track_list()
         self.seek_to(cur_t)
@@ -894,7 +913,7 @@ class MainWindow(QMainWindow):
         
         # 合併關鍵影格
         for kf in curr_track.keyframes:
-            prev_track.add_or_update_keyframe(kf.time, kf.pts, kf.rect_px, kf.source)
+            prev_track.add_or_update_keyframe(kf.time, rect_px=kf.rect_px, pts=kf.pts, source=kf.source)
             
         # 刪除目前的軌跡
         del self.project.tracks[row]
@@ -915,15 +934,15 @@ class MainWindow(QMainWindow):
         
         from ..track.evaluator import TrackEvaluator
         cur_t = self.video_source.current_time
-        evaluated = TrackEvaluator.evaluate_track_at(track, cur_t, self.video_source.width, self.video_source.height)
+        evaluated = TrackEvaluator.evaluate_raw_rect_at(track, cur_t)
         rect = evaluated if evaluated else (track.keyframes[0].rect_px if track.keyframes else (100, 100, 100, 100))
         
         tb = self.video_source.time_base
         in_pts = int(round(in_t / float(tb))) if tb else 0
         out_pts = int(round(out_t / float(tb))) if tb else 0
         
-        track.add_or_update_keyframe(in_t, in_pts, rect, source="manual_persist")
-        track.add_or_update_keyframe(out_t, out_pts, rect, source="manual_persist")
+        track.add_or_update_keyframe(in_t, rect_px=rect, pts=in_pts, source="manual_persist")
+        track.add_or_update_keyframe(out_t, rect_px=rect, pts=out_pts, source="manual_persist")
         self._refresh_track_list()
         self.seek_to(cur_t)
         QMessageBox.information(self, "常駐鎖定", f"已將 [{track.label}] 成功鎖定並延伸至整個工作區間 ({in_t:.2f}s ~ {out_t:.2f}s)！")
@@ -967,7 +986,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "關鍵影格", f"已刪除 {cur_t:.2f}s 處的關鍵影格。")
         else:
             from ..track.evaluator import TrackEvaluator
-            evaluated = TrackEvaluator.evaluate_track_at(track, cur_t, self.video_source.width, self.video_source.height)
+            evaluated = TrackEvaluator.evaluate_raw_rect_at(track, cur_t)
             rect = evaluated if evaluated else (100, 100, 100, 100)
             track.add_or_update_keyframe(cur_t, rect, self.video_source.current_pts, source="manual")
             QMessageBox.information(self, "關鍵影格", f"已在 {cur_t:.2f}s 打上新關鍵影格 🔷！")
@@ -1030,7 +1049,7 @@ class MainWindow(QMainWindow):
         self.ai_worker.start()
 
     def _refresh_track_list(self):
-        cur_row = self.track_list.currentRow()
+        selected = self.video_view.selected_track
         self.track_list.blockSignals(True)
         self.track_list.clear()
         for t in self.project.tracks:
@@ -1041,20 +1060,25 @@ class MainWindow(QMainWindow):
             item.setCheckState(Qt.CheckState.Checked if t.reviewed else Qt.CheckState.Unchecked)
             item.setText(f"{'✅ 已確認' if t.reviewed else '🟡 待檢查'}　{item.text()}")
             self.track_list.addItem(item)
-        if 0 <= cur_row < self.track_list.count():
-            self.track_list.setCurrentRow(cur_row)
+        for row, track in enumerate(self.project.tracks):
+            if track is selected:
+                self.track_list.setCurrentRow(row)
+                break
         self.track_list.blockSignals(False)
+        self.video_view.set_selected_track(self._selected_track())
+        self._update_edit_context()
         self._update_review_summary()
         self._update_timeline_state()
         self._update_safety_status()
 
     def _on_track_review_changed(self, item: QListWidgetItem):
-        track_id = item.data(Qt.ItemDataRole.UserRole)
-        for track in self.project.tracks:
-            if track.id == track_id:
-                track.reviewed = item.checkState() == Qt.CheckState.Checked
-                item.setText(f"{'✅ 已確認' if track.reviewed else '🟡 待檢查'}　{track.label} [{len(track.keyframes)} 關鍵影格 🔷]")
-                break
+        row = self.track_list.row(item)
+        if 0 <= row < len(self.project.tracks):
+            track = self.project.tracks[row]
+            track.reviewed = item.checkState() == Qt.CheckState.Checked
+            self.track_list.blockSignals(True)
+            item.setText(f"{'✅ 已確認' if track.reviewed else '🟡 待檢查'}　{track.label} [{len(track.keyframes)} 關鍵影格 🔷]")
+            self.track_list.blockSignals(False)
         self._update_review_summary()
         self._update_timeline_state()
 
@@ -1133,6 +1157,7 @@ class MainWindow(QMainWindow):
         return answer == QMessageBox.StandardButton.Save
 
     def _on_track_selection_changed(self, row: int):
+        self.video_view.set_selected_track(self._selected_track())
         if 0 <= row < len(self.project.tracks):
             # 互斥清除字幕選取，確保共用起訖控制列切換至遮蔽軌跡
             self.sub_list.blockSignals(True)
@@ -1148,6 +1173,11 @@ class MainWindow(QMainWindow):
             self.spin_strength.blockSignals(True)
             self.spin_strength.setValue(track.mask.strength)
             self.spin_strength.blockSignals(False)
+            # 目前影格沒有此軌跡時才跳轉；一般切換只更新 overlay，不解碼或 resize。
+            if self.video_source and track.enabled and track.keyframes:
+                from ..track.evaluator import TrackEvaluator
+                if TrackEvaluator.evaluate_raw_rect_at(track, self.video_source.current_time) is None:
+                    self.seek_to(track.keyframes[0].time)
             
         self._update_timeline_state()
         self._update_edit_context()
@@ -1248,6 +1278,7 @@ class MainWindow(QMainWindow):
             self.track_list.clearSelection()
             self.track_list.blockSignals(False)
 
+            self.video_view.set_selected_track(None)
             sub = self.project.subtitles[row]
             self.seek_to(sub.start_sec)
         self._update_edit_context()

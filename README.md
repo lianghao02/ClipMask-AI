@@ -1,10 +1,10 @@
-# 🛡️ ClipMask-AI v1.0.0
+# 🛡️ ClipMask-AI v1.1.0
 
 > **極速離線影音去識別化、AI 人臉追蹤與智慧聽打工作站**
 > *Designed for Newsrooms, Law Enforcement, Public Sector & Privacy Protection.*
 
 [![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12%20%7C%203.13-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-v1.0.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v1.1.0-blue.svg)](CHANGELOG.md)
 [![GUI](https://img.shields.io/badge/GUI-PySide6%20%2F%20Qt6-41CD52?logo=qt&logoColor=white)](https://www.qt.io/)
 [![Engine](https://img.shields.io/badge/Video%20Engine-PyAV%20(FFmpeg%20C%20Binding)-007808?logo=ffmpeg&logoColor=white)](https://ffmpeg.org/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -45,6 +45,18 @@
 - **智慧防重名命名**：自動帶入原片名與時間碼戳記，避免覆寫遺憾。
 
 ---
+
+## 🔍 遮蔽檢查與誤抓處理
+
+以下說明適用於目前原始碼；既有 Release／`dist` 執行檔不會自動更新。請依下方安裝步驟，以 `python run.py` 啟動修改後的版本。
+
+1. 載入影片、設定工作區間，再執行「AI 偵測人臉」。AI 結果是待檢查候選，不代表已確認安全。
+2. 點右側 Tracks 清單：對應框立即以**亮藍色粗框**標示，其他框保持一般樣式；在遮蔽預覽中也看得到選取框。若該軌跡不在目前時間，會跳到其起點。
+3. 遇到手部或背景誤抓，先巡看該軌跡的前後關鍵影格，確認不包含需要保留的人臉遮蔽，再按「刪除」。刪除的是整條軌跡，不只是目前影格；刪除後高亮會清除。
+4. 清單可捲動；「完整工作站」可拖曳右側 Tracks／字幕之間的水平分隔線調整高度。「人臉去識別」模式則讓 Tracks 使用右欄剩餘高度。窄視窗可橫向捲動頂端工具列找到匯出按鈕。
+5. 逐條確認後勾選「已確認」，再使用「匯出馬賽克影片」。不要用「快速串流剪輯」輸出去識別成品，它不套用遮蔽。
+
+為避免漏臉，維持 YuNet 原模型與偵測靈敏度，不自動丟棄低信心候選。安全 padding 只在預覽／匯出時套用一次，每邊最多為原始框的 25%；人工關鍵影格不會被同時間的自動追蹤結果覆蓋。高亮僅供編輯，**不會燒錄至輸出影片**。AI 可能誤抓或漏抓，仍需逐段人工確認。
 
 ## ⌨️ 鍵盤快捷鍵一覽
 

@@ -42,6 +42,25 @@ class VideoGraphicsView(QGraphicsView):
         self.draw_start_pt = QPointF()
         self.preview_rect_item: Optional[QGraphicsRectItem] = None
         self.mask_items: List[QGraphicsRectItem] = []
+        self.selected_track: Optional[Track] = None
+        self._overlay_tracks = []
+
+    def set_selected_track(self, track: Optional[Track]):
+        """只更新輔助框樣式，不重新解碼、重做馬賽克或改變影片縮放。"""
+        self.selected_track = track
+        self._update_overlay_styles()
+
+    def _update_overlay_styles(self):
+        for track, item in self._overlay_tracks:
+            selected = track is self.selected_track
+            pen = QPen(QColor("#00a9ff") if selected else QColor(201, 102, 75, 230),
+                       4 if selected else 2,
+                       Qt.PenStyle.SolidLine if selected else Qt.PenStyle.DashLine)
+            pen.setCosmetic(True)  # 縮放影片時仍維持可辨識的螢幕線寬
+            item.setPen(pen)
+            item.setBrush(QBrush(Qt.BrushStyle.NoBrush) if selected else QBrush(QColor(201, 102, 75, 70)))
+            item.setZValue(2 if selected else 1)
+            item.setVisible(selected or not self.show_real_mask_preview)
 
     def set_video_dimensions(self, width: int, height: int):
         self.video_w = width
@@ -81,16 +100,14 @@ class VideoGraphicsView(QGraphicsView):
         for item in self.mask_items:
             self.scene.removeItem(item)
         self.mask_items.clear()
+        self._overlay_tracks.clear()
         
-        if not self.show_real_mask_preview:
-            for track, (x, y, mw, mh) in evaluated:
-                rect_item = QGraphicsRectItem(x, y, mw, mh)
-                pen = QPen(QColor(201, 102, 75, 230), 2, Qt.PenStyle.DashLine)
-                brush = QBrush(QColor(201, 102, 75, 70))
-                rect_item.setPen(pen)
-                rect_item.setBrush(brush)
-                self.scene.addItem(rect_item)
-                self.mask_items.append(rect_item)
+        for track, (x, y, mw, mh) in evaluated:
+            rect_item = QGraphicsRectItem(x, y, mw, mh)
+            self.scene.addItem(rect_item)
+            self.mask_items.append(rect_item)
+            self._overlay_tracks.append((track, rect_item))
+        self._update_overlay_styles()
 
     def dragEnterEvent(self, event: QDragEnterEvent):
         if event.mimeData().hasUrls():

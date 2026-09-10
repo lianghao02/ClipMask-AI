@@ -30,6 +30,10 @@ class Track:
     def add_or_update_keyframe(self, time: float, rect_px: Tuple[int, int, int, int], pts: Optional[int] = None, source: str = "manual"):
         for kf in self.keyframes:
             if abs(kf.time - time) < 1e-4:
+                # 人工修正不可被偵測、追蹤或自動延伸覆蓋；新的人工操作仍可更新。
+                manual_sources = lambda value: value.startswith("manual") or value == "split"
+                if manual_sources(kf.source) and not manual_sources(source):
+                    return
                 kf.rect_px = rect_px
                 kf.pts = pts
                 kf.source = source
