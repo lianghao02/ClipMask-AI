@@ -40,3 +40,13 @@
   ```bash
   python -m pytest tests/ -q
   ```
+
+---
+
+## 5. 共用 Skill 引用與動態解析 (Discovery Rule)
+- 本專案遵循 LiangHao 全生態系標準規範 Skill：`lianghao-development`（Canonical Source 位於 `Dev-Control-Center/skills/lianghao-development`，v1.0.0）。
+- Agent 執行 AUDIT、EVALUATE、FIX、IMPROVE、RELEASE 或跨 Agent HANDOFF 時，依以下動態順序解析共用規範（嚴禁複製 Skill 到本專案）：
+  1. 環境變數 `LIANGHAO_SKILL_HOME`
+  2. 使用者本機設定檔 `%USERPROFILE%\.lianghao\config.json`
+  3. 鄰近工作區探索 `..\00_Dev-Control-Center\skills\lianghao-development` 或呼叫其 `skill-resolver.ps1`
+- 跨 Agent HANDOFF 一律使用 `lianghao-development` 標準範本，以 `Repository Full Name`、`Branch`、`Commit SHA` 為主要識別。
