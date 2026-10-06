@@ -1,9 +1,11 @@
 # 🛡️ ClipMask-AI v1.1.0
 
+開發驗收紀錄：[docs/ACCEPTANCE_RECORD.md](docs/ACCEPTANCE_RECORD.md)。
+
 > **極速離線影音去識別化、AI 人臉追蹤與智慧聽打工作站**
 > *Designed for Newsrooms, Law Enforcement, Public Sector & Privacy Protection.*
 
-[![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12%20%7C%203.13-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Version](https://img.shields.io/badge/version-v1.1.0-blue.svg)](CHANGELOG.md)
 [![GUI](https://img.shields.io/badge/GUI-PySide6%20%2F%20Qt6-41CD52?logo=qt&logoColor=white)](https://www.qt.io/)
 [![Engine](https://img.shields.io/badge/Video%20Engine-PyAV%20(FFmpeg%20C%20Binding)-007808?logo=ffmpeg&logoColor=white)](https://ffmpeg.org/)
@@ -11,6 +13,14 @@
 [![Style](https://img.shields.io/badge/Design-Morandi%20Journal-8C7A6B)](clipmask/gui/styles.py)
 
 ---
+
+## 專案概念與開發原因
+
+ClipMask-AI 將影音去識別、人臉追蹤、人工修正與字幕聽打放在同一個本機工作站。開發動機是專業剪輯工具設定複雜，而敏感素材不適合直接上傳線上服務，需要可人工確認的輕量流程。
+
+採 PySide6、PyAV、OpenCV 與 YuNet 模型，在本機處理影片。聲學 VAD 只協助標記活動區段，字幕仍由人員聽打；AI 軌跡是待檢查候選，匯出後仍需逐段檢視遮蔽。
+
+**典型流程**：載入影片 → 設定區間 → AI／人工建立遮蔽 → 確認軌跡與字幕 → 選擇匯出模式 → 檢查成品。
 
 ## 📖 專案簡介
 
@@ -24,7 +34,7 @@
 
 ### 1. 🤖 AI 智能偵測 ＋ 人工關鍵影格 (AI + Human-in-the-loop)
 - **ONNX YuNet 深度學習**：內嵌輕量人臉偵測模型，自動掃描工作區間內所有人物並建立連續追蹤軌跡。
-- **芥末暖黃關鍵影格 (🔷 Keyframes)**：AI 漏抓或轉頭時，隨時按 `K` 鍵或拉框手動打點；系統採用 **Lerp 線性內插平滑補間**，徹底杜絕 1 格露餡的法律風險。
+- **芥末暖黃關鍵影格 (🔷 Keyframes)**：AI 漏抓或轉頭時，隨時按 `K` 鍵或拉框手動打點；系統採用 **Lerp 線性內插平滑補間**。補間結果與匯出成品仍須逐段檢查，不能保證沒有漏遮。
 - **關鍵影格快速跳轉**：支援 `[` / `]` 一鍵跳轉至上一顆 / 下一顆鑽石標記 🔷。
 
 ### 2. 🎙️ 純聲學語音活動偵測 (VAD) ＋ 智慧聽打字幕
@@ -36,7 +46,7 @@
 
 ### 3. ⏱️ 雙軌 Pro 時間軸與懸浮縮圖 (Hover Thumbnails)
 - **👀 懸浮小縮圖偷看 (YouTube / Premiere 模式)**：滑鼠移到時間軸任何位置，自動飄出 160×90 圓角小縮圖偷看場景，主畫面完全不被打擾。
-- **⚡ 雙軌極速秒刷**：拖曳中採用 0 毫秒關鍵影格瞬刷；放開滑鼠精確停格。
+- **⚡ 雙軌預覽**：拖曳中以關鍵影格快速預覽，放開滑鼠後定位影格；實際延遲與定位結果依來源編碼及電腦效能而異。
 - **手帳 Work Range 剪輯**：右鍵拖拉或 `Shift+左鍵` 自由框出剪輯範圍。
 
 ### 4. ⚡ 雙模式安全匯出
@@ -48,7 +58,7 @@
 
 ## 🔍 遮蔽檢查與誤抓處理
 
-以下說明適用於目前原始碼；既有 Release／`dist` 執行檔不會自動更新。請依下方安裝步驟，以 `python run.py` 啟動修改後的版本。
+以下說明適用於目前原始碼；既有 Release／`dist` 執行檔不會自動更新。請依下方安裝步驟，以專案 BAT 或 `.venv\Scripts\python.exe -s run.py` 啟動修改後的版本。
 
 1. 載入影片、設定工作區間，再執行「AI 偵測人臉」。AI 結果是待檢查候選，不代表已確認安全。
 2. 點右側 Tracks 清單：對應框立即以**亮藍色粗框**標示，其他框保持一般樣式；在遮蔽預覽中也看得到選取框。若該軌跡不在目前時間，會跳到其起點。
@@ -79,21 +89,21 @@
 
 ### 系統需求
 - Windows 10 / 11 (64-bit)
-- Python 3.11 ~ 3.13
+- 完整 Python 3.13（目前啟動器與專案環境的驗證版本；其他版本需另驗證）
 - 不需要另外安裝 `ffmpeg.exe`；PyAV 會隨 Python 套件一併提供所需媒體函式庫。
 
 ### 安裝步驟
 
 ```powershell
 # 1. 複製專案庫
-git clone https://github.com/<your-username>/ClipMask-AI.git
+git clone https://github.com/lianghao02/ClipMask-AI.git
 cd ClipMask-AI
 
-# 2. 安裝必要套件
-pip install -r requirements.txt
+# 2. 建立專案環境及安裝指定套件
+pwsh -NoProfile -File setup_and_run.ps1 -NoLaunch
 
 # 3. 啟動工作站
-python run.py
+.venv\Scripts\python.exe -s run.py
 ```
 
 > **Windows 便捷啟動**：亦可直接雙擊專案根目錄下的 `啟動ClipMask-AI.bat`！
@@ -105,7 +115,7 @@ python run.py
 本專案包含完整的全流程自動化測試：
 
 ```powershell
-pytest tests/ -v
+.venv\Scripts\python.exe -B -s -m pytest tests/ -v
 ```
 
 測試涵蓋：
@@ -122,3 +132,29 @@ pytest tests/ -v
 ## 📄 開源授權
 
 本專案採用 [MIT License](LICENSE) 授權開源。
+
+## 開發環境與啟動（2026-10 環境修復）
+
+- 使用完整 Python 3.13 建立專案 `.venv`；啟動器不依賴 `python` 與 `py` 的預設版本。
+- 首次執行既有 BAT 入口，或 `pwsh -NoProfile -File setup_and_run.ps1 -NoLaunch`。需要網路取得 requirements.txt 的指定版本；無 Python 時提供安裝指引。
+- 唯讀健檢：`pwsh -NoProfile -File setup_and_run.ps1 -CheckOnly`；不建立環境、不下載套件。
+- 正常啟動使用 `.venv\Scripts\python.exe -B -s`。所有手動套件操作也必須使用此直譯器的 `-m pip`。
+- 已就緒環境不反覆安裝；`-Force` 僅重新套用依賴，不刪除環境。版本不符或環境損壞時保留現場，不自動改用全域 Python。
+- `.venv` 不可搬移。換路徑或重新 Clone 後須於最終路徑重新建立；全域 PATH 與全域套件不需調整。
+- 開發 `.venv` 與現有 Release／Portable 成品分開維護，既有發布包保留。免安裝、Win10／11 與乾淨電腦相容性另依發布門檻驗證。
+
+## 已知 Bug、限制與疑難排解
+
+以下區分已確認問題、功能限制及待驗證項目；歷史修正不代表舊發行包已自動更新，也不代表本次文件更新重新完成所有功能測試。
+
+| 狀態 | 情境 | 處理方式 |
+|---|---|---|
+| 辨識限制 | 人臉可能漏抓、誤抓，或在轉頭／遮擋處追蹤中斷。 | 逐段檢查並補人工關鍵影格；刪除軌跡前確認整段不包含需要遮蔽的人臉。 |
+| 模式限制 | 快速串流剪輯不套用馬賽克；切點受關鍵影格與容器影響。 | 去識別成品使用馬賽克匯出；需精確端點時檢查輸出的影格與音訊，而非只看選取秒數。 |
+| 待驗證（端點） | 合成樣本曾出現來源 90 格、壓制成品 89 格；約 3 秒快速剪輯容器顯示約 3.13 秒。 | 這是樣本觀察，不能推廣為所有影片的結果；精準端點與不同格式需另做實測。 |
+
+歷史修正包括遮罩重複 padding、人工關鍵影格優先權與播放／Seek 狀態競爭，詳見 [CHANGELOG.md](CHANGELOG.md) 及 [驗收紀錄](docs/ACCEPTANCE_RECORD.md)。VAD 不辨識說話者、也不產生語音辨識逐字稿；背景聲音仍可能形成活動區段。
+
+### 問題回報
+
+請提供使用版本／啟動方式、作業系統與相關環境、重現步驟、預期及實際結果，以及去識別的錯誤訊息或最小樣本。先保留現場與來源資料；不要附真實案件、完整帳號、密碼、Token 或 API Key。版本修正以對應原始碼與發行包為準。

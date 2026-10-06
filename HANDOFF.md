@@ -1,45 +1,62 @@
 # HANDOFF
 
+## 核心元資料 (Metadata)
+- **Repository**：lianghao02/ClipMask-AI
+- **Branch**：master
+- **Commit SHA**：45931191ef7406835b8fab0d28f0e29f43b93a88（本輪提交前基準；最新提交以 Git 記錄為準）
+- **Skill Version**：v1.0.0
+- **Task Type**：HANDOFF
+- **Local Path Hint**：12_ClipMask-AI
+
+---
+
 ## 目前狀態
-可交付（v1.1.0 已正式發布；進入 Stable / Maintenance）
+開發環境修復已驗證；本輪不包含正式發布。
 
 ## 本輪目標
-修正遮罩重複外擴、改善 Tracks／檢查區操作空間、清單選取與畫面框同步高亮。
+依已授權計畫修復 Python 環境，保留既有功能與使用者資料。
 
-## 已完成
-- `TrackEvaluator` 分離原始插值框與顯示／匯出框；外擴每邊上限 25%，四邊獨立裁切。
-- 修正關鍵影格截斷、合併、常駐、追蹤的座標／PTS 參數順序，避免將已外擴框回存造成持續放大。
-- 同時間人工關鍵影格優先於自動追蹤／延伸結果。
-- YuNet 原始 bbox 端點採 floor／ceil 邊界保護；未更換模型或降低召回率。
-- Tracks 清單改為可捲動、移除 125px 上限；完整工作站加入可拖曳垂直分隔器；頂端工具列可局部橫向捲動。
-- 清單選取以亮藍 4px 框高亮，切換／刪除／切換字幕時正確更新；高亮不寫入匯出像素。
-- README、CHANGELOG、IMPLEMENTATION_PLAN 補上操作與本輪變更。
+## 基準與已確認事實 (Baseline & Confirmed Facts)
+上述 SHA 為修復前已存在的 HEAD。既有功能成果承接原版本，不重做或撤銷；詳細跨專案基準位於控制中心 docs/python-environment-repair/baseline.json。
 
-## 刻意未修改
-- 未更換 YuNet／未調整全域信心閾值；誤抓由人工高亮後刪除整條軌跡。
-- 未重構影音核心、RenderExporter 管線、timeline 或全域 QSS。
-- 未更動 AI 模型、核心影音管線或無關 P3；發布後不再擴大功能。
+## 已完成 (Completed)
+2026-10-06 GitHub 同步交接：使用者已授權提交與推送前輪成果；本輪只提交已核對範圍。最新 Commit SHA、遠端同步與 CI 結果統一見控制中心 `docs/github-sync/RESULTS.md`，不將提交本身的 SHA 寫入同一份提交。 本輪補正 PowerShell 5.1 中文腳本編碼：僅增加 UTF-8 BOM，原內容位元組不變；29 個相關腳本在 5.1／7 語法檢查均通過，環境 CheckOnly 亦通過。
 
-## 驗證結果
-### 已執行
-- Python 3.13.15：`pytest tests/ -q` → 49 passed。
-- 相關測試：遮罩、人工優先、重複 padding、編輯流程、選取高亮、清單捲動／splitter、Render → 通過。
-- 指定影片本機流程：載入、YuNet 偵測、多軌跡選取高亮、刪除兩條手部誤抓、保留人臉遮蔽、1366／1380／1920 resize、splitter 拖曳、0.8 秒 Render → PASS。
-- 指定影片原始證據：80 秒 YuNet 偵測到真正人臉約 `(17,283,237,280)` 信心 0.795，另有手部誤抓約 `(681,290,169,240)` 信心 0.373。
+2026-10-06 代表性驗收：既有 .venv 重新產生合成影片，遮罩、SRT 讀回、壓制字幕、快速剪輯及音量活動標記通過，來源雜湊不變；壓制 89 影格／6 秒、快速剪輯 45 影格／約 3.133 秒。沒有變更產品程式或發布包，未宣稱真人辨識／任意切點精準輸出；詳見中央 docs/new-build-acceptance/RESULTS.md。
 
-### 尚未驗證
-- 未以使用者逐格人工判定所有影片區間的人臉覆蓋；目前實測僅抽查代表性片段與自動流程。
-- 未在真實硬體顯示器上驗證 DPI／系統縮放。
+2026-10-05 README 文件更新：補齊專案概念、開發原因、典型流程、已知 Bug／限制及回報方式，並依實際入口校正必要操作說明。本次沒有修改產品程式、環境或個人資料，未 Commit／Push；前輪成果與既有待辦繼承。文件檢核與逐案索引由控制中心 docs/readme-refresh/RESULTS.md 彙整，不代表本次重新驗收全部功能。
 
-### 已知風險
-- YuNet 仍可能產生低信心誤抓或漏抓；為避免漏臉，本輪保留候選，使用者需逐條確認後刪除誤抓。
+2026-10-05 目錄整理補充：ACCEPTANCE_RECORD.md 原樣移至 docs，README 更新連結；清除 build 中間檔/舊測試截圖與快取。現行 .venv、模型、v1.1.0 Portable 目錄/ZIP 及業務程式保留；CheckOnly/pip check、文件雜湊核對通過。詳見中央 docs/project-layout/RESULTS.md，未 Commit/Push。
+
+建立 .venv 3.13.15，維持 PySide6 6.11.1／OpenCV 4.13.0.92／PyAV 17.1.0／NumPy 2.2.3 等原主要版本；BAT 與 setup 共用環境，不使用全域 pip。
+
+## 異動檔案 (Changed Files)
+setup_and_run.ps1、啟動ClipMask-AI.bat、requirements.txt、requirements-build.txt、AGENTS.md、README.md。
+
+## 刻意未修改 (Do Not Do / Deliberately Omitted)
+未變更全域 Python／PATH／全域套件、既有發布包、業務演算法或原始資料；未 Commit／Push。07 原有兩個檔案修改保留且已核對雜湊。
+
+## 尚未完成 (Remaining Work)
+- **P1 (阻斷/必須)**：無已確認的現行開發環境阻斷。
+- **P2 (重要/當次)**：本輪必要修復與驗證完成。
+- **P3 (改善建議/暫緩)**：舊發布包不會因來源修正自動更新；下一次發布另驗證乾淨電腦與隔離入口。全域套件及共用 cv2 去重另案處理。
+
+## 驗證結果 (Validation)
+### 已執行測試與結果
+49 項全套測試通過；QtMultimedia／原生主視窗啟動與 pip check 通過。沒有變更 AI、VAD、時間軸、匯出或遮罩邏輯。
+### 尚未驗證項目
+Win10／其他使用者／無全域 Python 電腦、完整原生介面互動、重新打包及正式更新切換，本輪未宣稱通過。
+### 已知風險 (Known Risks)
+完整明細與回復方式見控制中心 docs/python-environment-repair/RESULTS.md；不可將新 .venv 的驗證視為舊 Portable 包已修復。
 
 ## Git 狀態
-- Commit：`91e4c70 release: finalize ClipMask-AI v1.1.0`
-- Push：是（`master` 已同步至 `origin/master`）
-- Working Tree：Clean（發布提交後）
-- Branch：master；Tag `v1.1.0` 已推送。
-- Release：<https://github.com/lianghao02/ClipMask-AI/releases/tag/v1.1.0>，Portable Asset `ClipMask-AI-v1.1.0-Portable.zip`（167,572,893 bytes；SHA-256 `c768de085b2ade21d7a27f49fcce7d983b64ea9dc7f387799743d1b17a10e251`）。
+- Commit：上述 SHA 為提交前基準；最新 SHA 見 `git log -1` 與中央同步報告。
+- Push：實際推送及遠端核對結果見中央 `docs/github-sync/RESULTS.md`。
+- Working Tree：最終狀態見中央同步報告；不含被忽略的環境、成品與使用者資料。
+- Branch：master。
 
-## 下一步
-僅處理已重現的高嚴重度問題或安全修正；任何功能擴張另開版本規劃。
+## 下一步建議動作 (Next Recommended Action)
+正常使用既有入口；若未要求發布，停止擴大修改。日後提交須先核對工作範圍，07 既有修改不得混入本輪。正式發布前再完成發布門檻。
+
+## 發布狀態 (Release Status)
+本輪沒有建立新發布版；既有版本保留。
