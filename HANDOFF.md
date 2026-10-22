@@ -3,60 +3,52 @@
 ## 核心元資料 (Metadata)
 - **Repository**：lianghao02/ClipMask-AI
 - **Branch**：master
-- **Commit SHA**：45931191ef7406835b8fab0d28f0e29f43b93a88（本輪提交前基準；最新提交以 Git 記錄為準）
+- **Commit SHA**：b334b5faa01122f04adcdf10f27b0259a29639b5（本輪修改前基準；本輪尚未提交）
 - **Skill Version**：v1.0.0
-- **Task Type**：HANDOFF
+- **Task Type**：FIX
 - **Local Path Hint**：12_ClipMask-AI
 
 ---
 
-## 目前狀態
-開發環境修復已驗證；本輪不包含正式發布。
+P26-10-22：使用者已授權提交與發布。此提交包含本輪已驗證的修正及 v1.1.1 版本更新。Tag、Release、部署與最終同步結果統一見控制中心 `docs/audit-release-20261022.md`，不得依提交前記錄重做修復。
 
 ## 本輪目標
-依已授權計畫修復 Python 環境，保留既有功能與使用者資料。
+修正匯出可覆寫來源、取消破壞既有輸出，以及失敗時檔案未關閉。
 
 ## 基準與已確認事實 (Baseline & Confirmed Facts)
-上述 SHA 為修復前已存在的 HEAD。既有功能成果承接原版本，不重做或撤銷；詳細跨專案基準位於控制中心 docs/python-environment-repair/baseline.json。
+起始為上述分支／SHA，工作目錄乾淨。只修改本輪已重現問題；19 排除。
 
 ## 已完成 (Completed)
-2026-10-06 GitHub 同步交接：使用者已授權提交與推送前輪成果；本輪只提交已核對範圍。最新 Commit SHA、遠端同步與 CI 結果統一見控制中心 `docs/github-sync/RESULTS.md`，不將提交本身的 SHA 寫入同一份提交。 本輪補正 PowerShell 5.1 中文腳本編碼：僅增加 UTF-8 BOM，原內容位元組不變；29 個相關腳本在 5.1／7 語法檢查均通過，環境 CheckOnly 亦通過。
-
-2026-10-06 代表性驗收：既有 .venv 重新產生合成影片，遮罩、SRT 讀回、壓制字幕、快速剪輯及音量活動標記通過，來源雜湊不變；壓制 89 影格／6 秒、快速剪輯 45 影格／約 3.133 秒。沒有變更產品程式或發布包，未宣稱真人辨識／任意切點精準輸出；詳見中央 docs/new-build-acceptance/RESULTS.md。
-
-2026-10-05 README 文件更新：補齊專案概念、開發原因、典型流程、已知 Bug／限制及回報方式，並依實際入口校正必要操作說明。本次沒有修改產品程式、環境或個人資料，未 Commit／Push；前輪成果與既有待辦繼承。文件檢核與逐案索引由控制中心 docs/readme-refresh/RESULTS.md 彙整，不代表本次重新驗收全部功能。
-
-2026-10-05 目錄整理補充：ACCEPTANCE_RECORD.md 原樣移至 docs，README 更新連結；清除 build 中間檔/舊測試截圖與快取。現行 .venv、模型、v1.1.0 Portable 目錄/ZIP 及業務程式保留；CheckOnly/pip check、文件雜湊核對通過。詳見中央 docs/project-layout/RESULTS.md，未 Commit/Push。
-
-建立 .venv 3.13.15，維持 PySide6 6.11.1／OpenCV 4.13.0.92／PyAV 17.1.0／NumPy 2.2.3 等原主要版本；BAT 與 setup 共用環境，不使用全域 pip。
+補正 clipmask.spec 的 DLL 搜尋路徑，排除 PATH 中 Poppler 的 ICU 污染。重建後在中文空白路徑隔離 Python 環境變數啟動，確認正常 ClipMask-AI 主視窗標題、顯示後存活 8 秒、正常關閉且 exit code 0；未親眼驗證全部畫面內容。
+匯出前拒絕來源同一路徑與硬連結；先寫入目標同資料夾的暫存檔，成功關閉影音資源後才替換目標。取消、編碼錯誤及進度回報失敗會清理暫存檔並保留來源與既有輸出。
 
 ## 異動檔案 (Changed Files)
-setup_and_run.ps1、啟動ClipMask-AI.bat、requirements.txt、requirements-build.txt、AGENTS.md、README.md。
+clipmask/export/exporter.py、tests/test_export_safety.py、HANDOFF.md。
 
 ## 刻意未修改 (Do Not Do / Deliberately Omitted)
-未變更全域 Python／PATH／全域套件、既有發布包、業務演算法或原始資料；未 Commit／Push。07 原有兩個檔案修改保留且已核對雜湊。
+未修改使用者原始資料、全域規則、其他工作階段成果或既有發布包。依本輪授權提交與部署。
 
 ## 尚未完成 (Remaining Work)
-- **P1 (阻斷/必須)**：無已確認的現行開發環境阻斷。
-- **P2 (重要/當次)**：本輪必要修復與驗證完成。
-- **P3 (改善建議/暫緩)**：舊發布包不會因來源修正自動更新；下一次發布另驗證乾淨電腦與隔離入口。全域套件及共用 cv2 去重另案處理。
+- **P1 (阻斷/必須)**：本機修正無已知阻斷。
+- **P2 (重要/當次)**：發布前依下列限制補必要實測；本輪尚未部署。
+- **P3 (改善建議/暫緩)**：原生 GUI 人工操作與重新打包的乾淨電腦驗收未執行。既有 Portable 下載包不會自動包含修正。
 
 ## 驗證結果 (Validation)
 ### 已執行測試與結果
-49 項全套測試通過；QtMultimedia／原生主視窗啟動與 pip check 通過。沒有變更 AI、VAD、時間軸、匯出或遮罩邏輯。
+新增安全案例先重現 4 項失敗；最終完整 pytest 55/55 通過，包含成功輸出解碼、音軌與來源不變驗證。
 ### 尚未驗證項目
-Win10／其他使用者／無全域 Python 電腦、完整原生介面互動、重新打包及正式更新切換，本輪未宣稱通過。
+原生 GUI 人工操作與重新打包的乾淨電腦驗收未執行。既有 Portable 下載包不會自動包含修正。
 ### 已知風險 (Known Risks)
-完整明細與回復方式見控制中心 docs/python-environment-repair/RESULTS.md；不可將新 .venv 的驗證視為舊 Portable 包已修復。
+原始碼修正不會自動更新線上服務、已安裝 PWA 或舊下載包。
 
 ## Git 狀態
-- Commit：上述 SHA 為提交前基準；最新 SHA 見 `git log -1` 與中央同步報告。
-- Push：實際推送及遠端核對結果見中央 `docs/github-sync/RESULTS.md`。
-- Working Tree：最終狀態見中央同步報告；不含被忽略的環境、成品與使用者資料。
+- Commit：本輪修正與發布準備合併為獨立提交；實際 SHA 見 Git 與中央發布報告。
+- Push：使用者已授權，本提交後執行並核對。
+- Working Tree：提交後確認 Clean；不包含被忽略的成品與測試環境。
 - Branch：master。
 
 ## 下一步建議動作 (Next Recommended Action)
-正常使用既有入口；若未要求發布，停止擴大修改。日後提交須先核對工作範圍，07 既有修改不得混入本輪。正式發布前再完成發布門檻。
+核對中央 `docs/audit-release-20261022.md` 的實際發布結果；成功後停止擴大修改，僅保留已註明的人工驗收。
 
 ## 發布狀態 (Release Status)
-本輪沒有建立新發布版；既有版本保留。
+使用者已授權本輪發布；產品版本與實際 Release／部署核對結果以中央發布報告為準。人工驗收缺口不冒充通過。

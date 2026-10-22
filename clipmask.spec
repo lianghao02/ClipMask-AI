@@ -7,6 +7,16 @@ block_cipher = None
 project_dir = os.path.abspath(SPECPATH)
 models_dir = os.path.join(project_dir, 'models')
 
+# 僅從 Python 與 Windows 標準路徑解析 DLL，避免 PATH 中其他工具的
+# ICU 等同名 DLL 混入發布包，造成 Qt 載入失敗。
+system_root = os.environ['SystemRoot']
+os.environ['PATH'] = os.pathsep.join([
+    sys.base_prefix,
+    os.path.join(sys.base_prefix, 'Scripts'),
+    os.path.join(system_root, 'System32'),
+    system_root,
+])
+
 datas = [
     (models_dir, 'models'),
 ]

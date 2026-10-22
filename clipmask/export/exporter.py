@@ -2,6 +2,9 @@
 ClipMask-AI Exporter (支援遮蔽 + 聽打字幕壓制)
 """
 import os
+import tempfile
+from contextlib import ExitStack, contextmanager
+from pathlib import Path
 import cv2
 import numpy as np
 import av
@@ -26,59 +29,78 @@ def _get_canonical_audio_layout(stream) -> str:
     return "stereo"
 
 
+@contextmanager
+def _export_destination(source_path: str, output_path: str):
+    """只在成功後替換目標；來源與既有輸出在失敗時維持原狀。"""
+    source = Path(source_path).resolve()
+    output = Path(output_path).resolve()
+    if source == output or (output.exists() and os.path.samefile(source, output)):
+        raise ValueError("匯出位置不可與來源影音檔相同，請另選檔名。")
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=f".{output.stem}.", suffix=output.suffix, dir=output.parent
+    )
+    os.close(descriptor)
+    try:
+        yield temporary
+    finally:
+        if os.path.exists(temporary):
+            os.remove(temporary)
+
+
 class FastCopyExporter:
     @staticmethod
     def export(source_path: str, in_time: float, out_time: float, output_path: str) -> bool:
         """純原生 PyAV 無損快速串流剪輯 (零外部依賴、免裝 ffmpeg、2 秒秒出)"""
         try:
-            in_container = av.open(source_path)
-            out_container = av.open(output_path, mode="w")
+            with _export_destination(source_path, output_path) as temporary:
+                with ExitStack() as resources:
+                    in_container = av.open(source_path)
+                    resources.callback(in_container.close)
+                    out_container = av.open(temporary, mode="w")
+                    resources.callback(out_container.close)
+                    streams_map = {}
+                    # 複製視訊與音訊串流模板
+                    for in_stream in in_container.streams:
+                        if in_stream.type in ("video", "audio"):
+                            out_stream = out_container.add_stream_from_template(in_stream)
+                            streams_map[in_stream] = out_stream
 
-            streams_map = {}
-            # 複製視訊與音訊串流模板
-            for in_stream in in_container.streams:
-                if in_stream.type in ("video", "audio"):
-                    out_stream = out_container.add_stream_from_template(in_stream)
-                    streams_map[in_stream] = out_stream
+                    if not streams_map:
+                        return False
 
-            if not streams_map:
-                in_container.close()
-                out_container.close()
-                return False
+                    v_stream = in_container.streams.video[0] if in_container.streams.video else None
+                    if v_stream:
+                        target_pts = int(round(in_time / float(v_stream.time_base)))
+                        in_container.seek(target_pts, any_frame=False, backward=True, stream=v_stream)
+                        end_pts = int(round(out_time / float(v_stream.time_base)))
+                    else:
+                        end_pts = None
 
-            v_stream = in_container.streams.video[0] if in_container.streams.video else None
-            if v_stream:
-                target_pts = int(round(in_time / float(v_stream.time_base)))
-                in_container.seek(target_pts, any_frame=False, backward=True, stream=v_stream)
-                end_pts = int(round(out_time / float(v_stream.time_base)))
-            else:
-                end_pts = None
+                    stream_base_dts = {}
+                    for packet in in_container.demux(list(streams_map.keys())):
+                        if packet.dts is None:
+                            continue
+                        source_stream = packet.stream
+                        packet_time = float(packet.pts * source_stream.time_base) if packet.pts is not None else float(packet.dts * source_stream.time_base)
+                        packet_duration = float(packet.duration * source_stream.time_base) if packet.duration else 0.0
+                        if packet_time >= out_time or packet_time + packet_duration > out_time:
+                            continue
 
-            stream_base_dts = {}
-            for packet in in_container.demux(list(streams_map.keys())):
-                if packet.dts is None:
-                    continue
-                source_stream = packet.stream
-                packet_time = float(packet.pts * source_stream.time_base) if packet.pts is not None else float(packet.dts * source_stream.time_base)
-                packet_duration = float(packet.duration * source_stream.time_base) if packet.duration else 0.0
-                if packet_time >= out_time or packet_time + packet_duration > out_time:
-                    continue
+                        # Stream copy 必須從關鍵影格開始；各串流各自將 DTS 歸零，
+                        # 保留 PTS-DTS 偏移以維持 B-frame 的顯示順序。
+                        if source_stream not in stream_base_dts:
+                            stream_base_dts[source_stream] = packet.dts
+                        base_dts = stream_base_dts[source_stream]
+                        packet.pts = packet.pts - base_dts if packet.pts is not None else None
+                        packet.dts = packet.dts - base_dts
+                        packet.stream = streams_map[source_stream]
+                        out_container.mux(packet)
 
-                # Stream copy 必須從關鍵影格開始；各串流各自將 DTS 歸零，
-                # 保留 PTS-DTS 偏移以維持 B-frame 的顯示順序。
-                if source_stream not in stream_base_dts:
-                    stream_base_dts[source_stream] = packet.dts
-                base_dts = stream_base_dts[source_stream]
-                packet.pts = packet.pts - base_dts if packet.pts is not None else None
-                packet.dts = packet.dts - base_dts
-                packet.stream = streams_map[source_stream]
-                out_container.mux(packet)
-
-            in_container.close()
-            out_container.close()
+                os.replace(temporary, output_path)
             return True
         except Exception:
             return False
+
 
 class RenderExporter:
     @staticmethod
@@ -118,12 +140,28 @@ class RenderExporter:
         if not project.source:
             return False
 
+        with _export_destination(project.source.path, output_path) as temporary:
+            with ExitStack() as resources:
+                success = RenderExporter._render_to_path(
+                    project, temporary, resources, progress_callback, should_cancel
+                )
+            if not success:
+                return False
+            if progress_callback:
+                progress_callback(100)
+            os.replace(temporary, output_path)
+        return True
+
+    @staticmethod
+    def _render_to_path(project, output_path, resources, progress_callback, should_cancel):
         source = VideoSource(project.source.path)
+        resources.callback(source.close)
         in_t = project.work_range.in_time if project.work_range else 0.0
         out_t = project.work_range.out_time if project.work_range else source.duration
         total_duration = max(0.1, out_t - in_t)
 
         output_container = av.open(output_path, mode="w")
+        resources.callback(output_container.close)
         cancelled = False
         stream = output_container.add_stream("h264", rate=int(round(source.fps)))
         stream.width = source.width
@@ -140,6 +178,7 @@ class RenderExporter:
         audio_samples_written = 0
         try:
             audio_input = av.open(project.source.path)
+            resources.callback(audio_input.close)
             if audio_input.streams.audio:
                 audio_stream = audio_input.streams.audio[0]
                 audio_rate = audio_stream.codec_context.sample_rate or 48000
@@ -228,20 +267,4 @@ class RenderExporter:
                 for packet in audio_output.encode():
                     output_container.mux(packet)
 
-        output_container.close()
-        source.close()
-        if audio_input:
-            audio_input.close()
-
-        if cancelled:
-            try:
-                if os.path.exists(output_path):
-                    os.remove(output_path)
-            except OSError:
-                pass
-            return False
-        
-        if progress_callback:
-            progress_callback(100)
-            
-        return True
+        return not cancelled

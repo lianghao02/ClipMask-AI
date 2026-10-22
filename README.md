@@ -1,4 +1,4 @@
-# 🛡️ ClipMask-AI v1.1.0
+# 🛡️ ClipMask-AI v1.1.1
 
 開發驗收紀錄：[docs/ACCEPTANCE_RECORD.md](docs/ACCEPTANCE_RECORD.md)。
 
@@ -6,7 +6,7 @@
 > *Designed for Newsrooms, Law Enforcement, Public Sector & Privacy Protection.*
 
 [![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-v1.1.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v1.1.1-blue.svg)](CHANGELOG.md)
 [![GUI](https://img.shields.io/badge/GUI-PySide6%20%2F%20Qt6-41CD52?logo=qt&logoColor=white)](https://www.qt.io/)
 [![Engine](https://img.shields.io/badge/Video%20Engine-PyAV%20(FFmpeg%20C%20Binding)-007808?logo=ffmpeg&logoColor=white)](https://ffmpeg.org/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -158,3 +158,8 @@ pwsh -NoProfile -File setup_and_run.ps1 -NoLaunch
 ### 問題回報
 
 請提供使用版本／啟動方式、作業系統與相關環境、重現步驟、預期及實際結果，以及去識別的錯誤訊息或最小樣本。先保留現場與來源資料；不要附真實案件、完整帳號、密碼、Token 或 API Key。版本修正以對應原始碼與發行包為準。
+
+
+### 免安裝版打包邊界
+
+`clipmask.spec` 會將 DLL 搜尋範圍限制在目前 Python 與 Windows 標準路徑，避免其他工具放在 PATH 的同名 ICU DLL 混入發布包。打包使用 `requirements-build.txt` 指定的 PyInstaller，建置後仍須從中文空白路徑驗證主視窗啟動；程序仍在執行不代表啟動成功。
