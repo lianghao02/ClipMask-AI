@@ -3,7 +3,7 @@
 ## 核心元資料 (Metadata)
 - **Repository**：lianghao02/ClipMask-AI
 - **Branch**：master
-- **Commit SHA**：b334b5faa01122f04adcdf10f27b0259a29639b5（本輪修改前基準；本輪尚未提交）
+- **Commit SHA**：b334b5faa01122f04adcdf10f27b0259a29639b5（本輪修改前基準；本輪已提交，最新提交以 Git 記錄為準）
 - **Skill Version**：v1.0.0
 - **Task Type**：FIX
 - **Local Path Hint**：12_ClipMask-AI
