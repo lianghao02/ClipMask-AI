@@ -3,14 +3,17 @@
 ## 核心元資料 (Metadata)
 - **Repository**：lianghao02/ClipMask-AI
 - **Branch**：master
-- **Commit SHA**：578c586（本輪修改前基準；本輪修改尚未提交）
+- **Commit SHA**：a5632d7（發布準備前基準；發布提交與 tag v1.2.0 以 Git 記錄為準）
 - **Skill Version**：v1.0.0
-- **Task Type**：FIX
+- **Task Type**：RELEASE
 - **Local Path Hint**：12_ClipMask-AI
 
 ---
 
-## 後續追加（提交 99c1871 之後，尚未提交）
+## 發布狀態 (v1.2.0)
+使用者已授權發布 v1.2.0。已完成：`version.txt`、README、CHANGELOG 更新，中央 `check_release_versions.py 12` 為 OK；pytest 77/77；PyInstaller 重新打包；`ClipMask-AI-v1.2.0-Portable.zip`（141247976 bytes，SHA-256 a07c9895486fdc7204e3958b6247e797254dcf293892867a193e79ecf27e6bc8）解壓至含中文與空白的路徑，以清除 Python 環境變數、不同工作目錄啟動，主視窗標題正確、存活 8 秒、正常關閉 exit code 0。未驗證：完整 GUI 人工操作、不同 Windows 使用者與乾淨電腦。tag、GitHub Release、附件回驗與 13_Project-Hub 展示同步結果見本輪回報與 Git／Release 記錄。
+
+## 後續追加（原 99c1871 之後各項，已隨 v1.2.0 提交）
 新增「精確剪輯（不套用遮蔽）」：`export_exact_cut`（exporter.py）重新編碼並精準裁切至工作區間，不帶遮蔽與字幕、不更動原專案；介面按鈕於「剪輯」與「完整工作站」模式顯示，使用 `ExactCutWorker` 背景執行，可取消。完整 pytest 63/63。實測顯示快速剪輯起點會退回前一關鍵影格，壓制匯出則精確。
 
 介面調整（同樣尚未提交）：新增流程步驟列 `lbl_step_guide`（① 設定區間 → ② AI 偵測／手動框選 → ③ 確認軌跡 → ④ 匯出，依狀態標示「目前」步驟與下一步提示；剪輯模式改為兩步）；頂部工具列精簡：「字幕聽打」「完整工作站」收進「更多 ▾」選單（`btn_more_modes`，原按鈕物件保留但隱藏），匯出按鈕與模式按鈕改短標籤，說明移至 tooltip。pytest 65/65；離屏截圖僅驗證版面（無中文字型，文字顯示為方框），未在真實視窗確認文字與外觀。
