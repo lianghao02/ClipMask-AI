@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QFileDialog, QListWidget, QListWidgetItem, QLabel, QGroupBox,
     QMessageBox, QSplitter, QProgressBar, QComboBox, QSpinBox,
-    QLineEdit, QProgressDialog, QButtonGroup, QScrollArea, QFrame, QMenu
+    QLineEdit, QProgressDialog, QButtonGroup, QScrollArea, QFrame
 )
 from PySide6.QtGui import QImage, QKeySequence, QShortcut, QDragEnterEvent, QDropEvent, QIcon, QColor
 from PySide6.QtCore import Qt, QThread, Signal, Slot, QUrl
@@ -270,13 +270,12 @@ class MainWindow(QMainWindow):
         self.mode_group.addButton(self.btn_mode_mask)
         top_bar.addWidget(self.btn_mode_mask)
 
-        self.btn_mode_transcribe = QPushButton("🎙️ 字幕聽打")
+        self.btn_mode_transcribe = QPushButton("🎙️ 字幕")
         self.btn_mode_transcribe.setCheckable(True)
         self.btn_mode_transcribe.setProperty("class", "mode-btn")
         self.btn_mode_transcribe.setToolTip("VAD 語音活動對齊、聽打文字、字幕拖曳微調與 SRT 匯出")
         self.btn_mode_transcribe.clicked.connect(lambda: self.set_work_mode("transcribe"))
         self.mode_group.addButton(self.btn_mode_transcribe)
-        self.btn_mode_transcribe.hide()  # 少用模式收進「更多」選單
 
         self.btn_mode_cut = QPushButton("✂️ 剪輯")
         self.btn_mode_cut.setCheckable(True)
@@ -285,6 +284,7 @@ class MainWindow(QMainWindow):
         self.btn_mode_cut.clicked.connect(lambda: self.set_work_mode("cut"))
         self.mode_group.addButton(self.btn_mode_cut)
         top_bar.addWidget(self.btn_mode_cut)
+        top_bar.addWidget(self.btn_mode_transcribe)
 
         self.btn_mode_full = QPushButton("🎛️ 完整工作站")
         self.btn_mode_full.setCheckable(True)
@@ -292,16 +292,8 @@ class MainWindow(QMainWindow):
         self.btn_mode_full.setToolTip("展開全部控制項（去識別、聽打、剪輯）")
         self.btn_mode_full.clicked.connect(lambda: self.set_work_mode("full"))
         self.mode_group.addButton(self.btn_mode_full)
-        self.btn_mode_full.hide()
+        self.btn_mode_full.hide()  # 不在工具列顯示；模式切換邏輯保留，需要時可再加回
 
-        self.btn_more_modes = QPushButton("更多")
-        self.btn_more_modes.setProperty("class", "mode-btn")
-        self.btn_more_modes.setToolTip("切換到字幕聽打或完整工作站")
-        more_menu = QMenu(self.btn_more_modes)
-        more_menu.addAction("🎙️ 字幕聽打", lambda: self.set_work_mode("transcribe"))
-        more_menu.addAction("🎛️ 完整工作站", lambda: self.set_work_mode("full"))
-        self.btn_more_modes.setMenu(more_menu)
-        top_bar.addWidget(self.btn_more_modes)
 
         top_bar.addSpacing(12)
 
@@ -566,9 +558,6 @@ class MainWindow(QMainWindow):
         self.btn_mode_transcribe.setChecked(mode == "transcribe")
         self.btn_mode_cut.setChecked(mode == "cut")
         self.btn_mode_full.setChecked(mode == "full")
-        if hasattr(self, "btn_more_modes"):
-            self.btn_more_modes.setText({"transcribe": "字幕聽打", "full": "完整工作站"}.get(mode, "更多"))
-            self.btn_more_modes.setStyleSheet("font-weight: 700;" if mode in ("transcribe", "full") else "")
         if hasattr(self, "lbl_step_guide"):
             self._update_step_guide()
 
@@ -1217,7 +1206,8 @@ class MainWindow(QMainWindow):
             elif report.critical:
                 current, hint = 3, f"遮蔽有 {len(report.critical)} 項嚴重缺口，請補關鍵影格後再匯出。"
             else:
-                current, hint = 4, f"可以匯出；其中 {report.uncovered_seconds:.1f} 秒沒有遮蔽，匯出前會再確認。"
+                gap = f"其中 {report.uncovered_seconds:.1f} 秒沒有遮蔽，" if report.uncovered_seconds > 0.05 else f"有 {len(report.warnings)} 項提醒，"
+                current, hint = 4, f"可以匯出；{gap}匯出前會再確認。"
         self.lbl_step_guide.setText(render(steps, current, hint).replace("▶ ", f"▶ 目前：", 1))
 
     def _update_safety_status(self):
@@ -1234,7 +1224,8 @@ class MainWindow(QMainWindow):
             self.lbl_safety_status.setText(f"⚠ 遮蔽檢查發現 {len(report.critical)} 項嚴重缺口，需補齊後才能匯出。")
             self.lbl_safety_status.setStyleSheet("color: #8a3b2e; background: #f8e8e2; padding: 6px 8px; border-radius: 6px; font-weight: 600;")
         else:
-            self.lbl_safety_status.setText(f"ℹ {len(report.warnings)} 項提醒：{report.uncovered_seconds:.1f} 秒沒有遮蔽，匯出前會再請你確認。")
+            gap = f"{report.uncovered_seconds:.1f} 秒沒有遮蔽，" if report.uncovered_seconds > 0.05 else ""
+            self.lbl_safety_status.setText(f"ℹ {len(report.warnings)} 項提醒：{gap}匯出前會再請你確認。")
             self.lbl_safety_status.setStyleSheet("color: #8a5b20; background: #fff4dc; padding: 6px 8px; border-radius: 6px;")
 
     @staticmethod

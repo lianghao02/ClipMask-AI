@@ -325,16 +325,15 @@ def test_step_guide_follows_workflow_state(window):
     assert "剪輯" in guide() and "目前：④" not in guide()
 
 
-def test_secondary_modes_are_collapsed_into_more_menu(window):
-    assert window.btn_mode_transcribe.isHidden() and window.btn_mode_full.isHidden()
-    labels = [action.text() for action in window.btn_more_modes.menu().actions()]
-    assert any("字幕" in label for label in labels) and any("完整" in label for label in labels)
-    window.btn_more_modes.menu().actions()[0].trigger()
+def test_mode_buttons_are_mask_cut_subtitle_only(window):
+    assert not hasattr(window, "btn_more_modes")
+    assert [b.isHidden() for b in (window.btn_mode_mask, window.btn_mode_cut, window.btn_mode_transcribe)] == [False] * 3
+    assert window.btn_mode_full.isHidden()
+    window.btn_mode_transcribe.click()
     assert window.current_work_mode == "transcribe"
 
 
 def test_toolbar_polish_regressions(window):
-    assert "▾" not in window.btn_more_modes.text()  # 選單箭頭由 Qt 繪製，避免雙箭頭
     assert window.lbl_safety_status.isHidden()  # 未載入影片時不重複提示
     assert "縮小" in window.timeline.btn_zoom_out.text() and "放大" in window.timeline.btn_zoom_in.text()
     assert "AI 偵測" in window.lbl_review_summary.text()
@@ -371,3 +370,18 @@ def test_export_warns_instead_of_blocking_for_partial_coverage(window, monkeypat
     monkeypatch.setattr(QMessageBox, "exec", fake_ask)
     assert window._confirm_redaction_export() is False  # 使用者取消
     assert shown.get("asked")  # 是詢問而不是直接阻擋
+
+
+def test_warning_text_does_not_claim_zero_uncovered_seconds(window):
+    track = make_track()
+    track.keyframes = [Keyframe(1, rect_px=(10, 10, 20, 20))]  # 單一關鍵影格，但整段都在 ±1 秒內
+    track.reviewed = True
+    window.video_source = SimpleNamespace(current_time=1, current_pts=0, width=640, height=480,
+                                          duration=2, time_base=Fraction(1, 10))
+    window.seek_to = lambda seconds: None
+    window.project.work_range = WorkRange(0.5, 1.5)
+    window.project.tracks = [track]
+    window._refresh_track_list()
+    assert "0.0 秒" not in window.lbl_safety_status.text()
+    assert "0.0 秒" not in window.lbl_step_guide.text()
+    assert "提醒" in window.lbl_safety_status.text()
