@@ -294,7 +294,7 @@ class MainWindow(QMainWindow):
         self.mode_group.addButton(self.btn_mode_full)
         self.btn_mode_full.hide()
 
-        self.btn_more_modes = QPushButton("更多 ▾")
+        self.btn_more_modes = QPushButton("更多")
         self.btn_more_modes.setProperty("class", "mode-btn")
         self.btn_more_modes.setToolTip("切換到字幕聽打或完整工作站")
         more_menu = QMenu(self.btn_more_modes)
@@ -357,6 +357,7 @@ class MainWindow(QMainWindow):
 
         self.lbl_safety_status = QLabel("⚪ 請先載入影片，再建立或檢查遮蔽軌跡。")
         self.lbl_safety_status.setWordWrap(True)
+        self.lbl_safety_status.hide()
         left_layout.addWidget(self.lbl_safety_status)
 
         # 視訊畫面檢視
@@ -566,7 +567,7 @@ class MainWindow(QMainWindow):
         self.btn_mode_cut.setChecked(mode == "cut")
         self.btn_mode_full.setChecked(mode == "full")
         if hasattr(self, "btn_more_modes"):
-            self.btn_more_modes.setText({"transcribe": "字幕聽打 ▾", "full": "完整工作站 ▾"}.get(mode, "更多 ▾"))
+            self.btn_more_modes.setText({"transcribe": "字幕聽打", "full": "完整工作站"}.get(mode, "更多"))
             self.btn_more_modes.setStyleSheet("font-weight: 700;" if mode in ("transcribe", "full") else "")
         if hasattr(self, "lbl_step_guide"):
             self._update_step_guide()
@@ -855,16 +856,7 @@ class MainWindow(QMainWindow):
         pending_ranges = []
         reviewed_ranges = []
         if in_t < out_t:
-            if not self.project.tracks:
-                uncovered_ranges.append((in_t, out_t))
-            else:
-                # 簡單計算所有軌跡聯集的覆蓋範圍
-                cov_min = min(t.keyframes[0].time for t in self.project.tracks if t.keyframes) if any(t.keyframes for t in self.project.tracks) else in_t
-                cov_max = max(t.keyframes[-1].time for t in self.project.tracks if t.keyframes) if any(t.keyframes for t in self.project.tracks) else in_t
-                if in_t < cov_min:
-                    uncovered_ranges.append((in_t, cov_min))
-                if cov_max < out_t:
-                    uncovered_ranges.append((cov_max, out_t))
+            uncovered_ranges = list(CoverageAnalyzer.analyze(self.project.tracks, in_t, out_t).uncovered_ranges)
 
         for track in self.project.tracks:
             if not track.keyframes:
@@ -1161,7 +1153,7 @@ class MainWindow(QMainWindow):
         reviewed = sum(1 for track in self.project.tracks if track.reviewed)
         pending = total - reviewed
         if not total:
-            self.lbl_review_summary.setText("待檢查遮蔽：尚未建立軌跡")
+            self.lbl_review_summary.setText("尚未建立遮蔽：按「AI 偵測人臉」，或在畫面上拖曳框選。")
             self.btn_accept_all.setEnabled(False)
             self.btn_next_review.setEnabled(False)
         elif pending:
@@ -1222,21 +1214,37 @@ class MainWindow(QMainWindow):
             report = CoverageAnalyzer.analyze(tracks, work.in_time, work.out_time)
             if report.is_safe_to_continue:
                 current, hint = 4, f"{span}可以按「匯出馬賽克影片」。"
+            elif report.critical:
+                current, hint = 3, f"遮蔽有 {len(report.critical)} 項嚴重缺口，請補關鍵影格後再匯出。"
             else:
-                current, hint = 3, f"遮蔽有 {len(report.messages)} 項缺口，請補關鍵影格或用「常駐全段」後再匯出。"
+                current, hint = 4, f"可以匯出；其中 {report.uncovered_seconds:.1f} 秒沒有遮蔽，匯出前會再確認。"
         self.lbl_step_guide.setText(render(steps, current, hint).replace("▶ ", f"▶ 目前：", 1))
 
     def _update_safety_status(self):
         self._update_step_guide()
+        # 尚未載入影片時步驟列已提示下一步，不再重複顯示狀態列。
+        self.lbl_safety_status.setVisible(bool(self.video_source and self.project.work_range))
         if not self.video_source or not self.project.work_range:
             return
         report = CoverageAnalyzer.analyze(self.project.tracks, self.project.work_range.in_time, self.project.work_range.out_time)
         if report.is_safe_to_continue:
             self.lbl_safety_status.setText("✅ 軌道完整性檢查未發現可判定風險；仍請人工逐段看片。")
             self.lbl_safety_status.setStyleSheet("color: #3b5941; background: #ebf2ea; padding: 6px 8px; border-radius: 6px;")
-        else:
-            self.lbl_safety_status.setText(f"⚠ 遮蔽檢查發現 {len(report.messages)} 項風險；安全壓制前需確認。")
+        elif report.critical:
+            self.lbl_safety_status.setText(f"⚠ 遮蔽檢查發現 {len(report.critical)} 項嚴重缺口，需補齊後才能匯出。")
             self.lbl_safety_status.setStyleSheet("color: #8a3b2e; background: #f8e8e2; padding: 6px 8px; border-radius: 6px; font-weight: 600;")
+        else:
+            self.lbl_safety_status.setText(f"ℹ {len(report.warnings)} 項提醒：{report.uncovered_seconds:.1f} 秒沒有遮蔽，匯出前會再請你確認。")
+            self.lbl_safety_status.setStyleSheet("color: #8a5b20; background: #fff4dc; padding: 6px 8px; border-radius: 6px;")
+
+    @staticmethod
+    def _coverage_dialog_texts(report, preview_count: int = 6):
+        """對話框只顯示前幾項摘要，完整清單放進可捲動的詳細資料，避免視窗被長清單撐爆。"""
+        lines = [f"• {message}" for message in report.messages]
+        summary = "\n".join(lines[:preview_count])
+        if len(lines) > preview_count:
+            summary += f"\n…另有 {len(lines) - preview_count} 項，請展開「顯示詳細資料」。"
+        return summary, "\n".join(lines)
 
     def _confirm_redaction_export(self):
         pending_tracks = [track for track in self.project.tracks if not track.reviewed]
@@ -1250,16 +1258,22 @@ class MainWindow(QMainWindow):
         report = CoverageAnalyzer.analyze(self.project.tracks, self.project.work_range.in_time, self.project.work_range.out_time)
         if report.is_safe_to_continue:
             return True
-        detail = "\n".join(f"• {message}" for message in report.messages)
+        summary, details = self._coverage_dialog_texts(report)
+        box = QMessageBox(self)
+        box.setDetailedText(details)
         if report.critical:
-            QMessageBox.critical(
-                self,
-                "已阻擋去識別化匯出",
-                f"遮蔽覆蓋檢查發現嚴重缺口：\n\n{detail}\n\n請補齊關鍵影格並逐段檢視後再匯出。",
-            )
+            box.setIcon(QMessageBox.Icon.Critical)
+            box.setWindowTitle("已阻擋去識別化匯出")
+            box.setText(f"遮蔽覆蓋檢查發現嚴重缺口：\n\n{summary}\n\n請補齊關鍵影格並逐段檢視後再匯出。")
+            box.setStandardButtons(QMessageBox.StandardButton.Ok)
+            box.exec()
             return False
-        answer = QMessageBox.warning(self, "遮蔽覆蓋檢查", f"偵測到可能造成漏遮蔽的軌道風險：\n\n{detail}\n\n此檢查不能取代人工逐段看片。是否仍要繼續壓制匯出？", QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Cancel)
-        return answer == QMessageBox.StandardButton.Save
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("匯出前確認")
+        box.setText(f"以下情形不會被遮蔽，請確認是否符合預期：\n\n{summary}\n\n此檢查不能取代人工逐段看片。是否仍要匯出？")
+        box.setStandardButtons(QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        return box.exec() == QMessageBox.StandardButton.Save
 
     def _on_track_selection_changed(self, row: int):
         self.video_view.set_selected_track(self._selected_track())

@@ -53,6 +53,14 @@ QPushButton#btn_primary:hover {
     border-color: #3f5d46;
 }
 
+/* 停用時主按鈕與 AI 按鈕須回到灰階，避免看起來仍可按 */
+QPushButton#btn_primary:disabled,
+QPushButton#btn_ai:disabled {
+    background-color: #ede9e1;
+    color: #a8a49c;
+    border: 1px solid #e0dbd1;
+}
+
 /* AI 人臉按鈕 (莫蘭迪霧藍) */
 QPushButton#btn_ai {
     background-color: #5c7c99;

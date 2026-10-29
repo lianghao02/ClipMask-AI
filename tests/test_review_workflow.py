@@ -167,8 +167,8 @@ def test_review_list_height_scroll_and_splitter(window, qapp):
     assert window.review_splitter.sizes()[0] != before[0]
     window.resize(1366, 768)
     qapp.processEvents()
+    # 工具列精簡後 1366 寬可全部顯示；若仍溢出則捲到最右，最後一顆按鈕必須可達。
     scrollbar = window.toolbar_scroll.horizontalScrollBar()
-    assert scrollbar.maximum() > 0
     scrollbar.setValue(scrollbar.maximum())
     qapp.processEvents()
     button_pos = window.btn_fast_export.mapTo(window.toolbar_scroll.viewport(), window.btn_fast_export.rect().center())
@@ -331,3 +331,43 @@ def test_secondary_modes_are_collapsed_into_more_menu(window):
     assert any("字幕" in label for label in labels) and any("完整" in label for label in labels)
     window.btn_more_modes.menu().actions()[0].trigger()
     assert window.current_work_mode == "transcribe"
+
+
+def test_toolbar_polish_regressions(window):
+    assert "▾" not in window.btn_more_modes.text()  # 選單箭頭由 Qt 繪製，避免雙箭頭
+    assert window.lbl_safety_status.isHidden()  # 未載入影片時不重複提示
+    assert "縮小" in window.timeline.btn_zoom_out.text() and "放大" in window.timeline.btn_zoom_in.text()
+    assert "AI 偵測" in window.lbl_review_summary.text()
+
+
+def test_disabled_primary_buttons_use_disabled_style():
+    from clipmask import gui
+    import inspect
+    from clipmask.gui import styles
+    source = inspect.getsource(styles)
+    assert "QPushButton#btn_primary:disabled" in source and "QPushButton#btn_ai:disabled" in source
+
+
+def test_coverage_dialog_text_is_short_with_full_details(window):
+    from clipmask.track.coverage import CoverageReport
+    report = CoverageReport(warnings=[f"「人物 {i}」只有一個關鍵影格。" for i in range(40)])
+    summary, details = window._coverage_dialog_texts(report)
+    assert summary.count("•") == 6 and "另有 34 項" in summary
+    assert details.count("•") == 40
+
+
+def test_export_warns_instead_of_blocking_for_partial_coverage(window, monkeypatch):
+    track = make_track()
+    track.keyframes = [Keyframe(t, rect_px=(10, 10, 20, 20)) for t in (2, 3, 4)]
+    track.reviewed = True
+    window.project.tracks = [track]
+    window.project.work_range = WorkRange(0, 10)
+    shown = {}
+
+    def fake_ask(self):
+        shown["asked"] = True
+        return QMessageBox.StandardButton.Cancel
+
+    monkeypatch.setattr(QMessageBox, "exec", fake_ask)
+    assert window._confirm_redaction_export() is False  # 使用者取消
+    assert shown.get("asked")  # 是詢問而不是直接阻擋

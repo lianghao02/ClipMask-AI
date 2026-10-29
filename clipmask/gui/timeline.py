@@ -571,18 +571,18 @@ class TimelineWidget(QWidget):
         edit_layout.setSpacing(6)
 
         # 關鍵影格導航
-        self.btn_prev_kf = QPushButton("⏮ 上個 🔷")
+        self.btn_prev_kf = QPushButton("⏮ 上個關鍵格")
         self.btn_prev_kf.setToolTip("跳至上一個關鍵影格 ([)")
         self.btn_prev_kf.clicked.connect(self.prev_keyframe_requested.emit)
         edit_layout.addWidget(self.btn_prev_kf)
 
-        self.btn_toggle_kf = QPushButton("🔷 標記影格")
+        self.btn_toggle_kf = QPushButton("🔷 標記關鍵格")
         self.btn_toggle_kf.setToolTip("在當前秒數新增或刪除關鍵影格 (K)")
         self.btn_toggle_kf.setStyleSheet("color: #b45309; font-weight: bold;")
         self.btn_toggle_kf.clicked.connect(self.toggle_keyframe_at_current.emit)
         edit_layout.addWidget(self.btn_toggle_kf)
 
-        self.btn_next_kf = QPushButton("🔷 下個 ⏭")
+        self.btn_next_kf = QPushButton("下個關鍵格 ⏭")
         self.btn_next_kf.setToolTip("跳至下一個關鍵影格 (])")
         self.btn_next_kf.clicked.connect(self.next_keyframe_requested.emit)
         edit_layout.addWidget(self.btn_next_kf)
@@ -605,15 +605,13 @@ class TimelineWidget(QWidget):
 
         # 縮放工具按鈕組 (剪映同款)
         edit_layout.addSpacing(10)
-        self.btn_zoom_out = QPushButton("🔍 ➖")
+        self.btn_zoom_out = QPushButton("🔍 縮小")
         self.btn_zoom_out.setToolTip("縮小時間軸檢視 (Ctrl + 滑鼠滾輪向下)")
-        self.btn_zoom_out.setFixedWidth(32)
         self.btn_zoom_out.clicked.connect(lambda: self.canvas.set_zoom(self.canvas.zoom_factor * 0.75))
         edit_layout.addWidget(self.btn_zoom_out)
 
-        self.btn_zoom_in = QPushButton("🔍 ➕")
+        self.btn_zoom_in = QPushButton("🔍 放大")
         self.btn_zoom_in.setToolTip("放大時間軸檢視，精確微調字幕 (Ctrl + 滑鼠滾輪向上)")
-        self.btn_zoom_in.setFixedWidth(32)
         self.btn_zoom_in.clicked.connect(lambda: self.canvas.set_zoom(self.canvas.zoom_factor * 1.35))
         edit_layout.addWidget(self.btn_zoom_in)
 
