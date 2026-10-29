@@ -1,6 +1,7 @@
 """
 ClipMask-AI Exporter (支援遮蔽 + 聽打字幕壓制)
 """
+import dataclasses
 import os
 import tempfile
 from contextlib import ExitStack, contextmanager
@@ -51,6 +52,17 @@ def _export_destination(source_path: str, output_path: str):
     finally:
         if os.path.exists(temporary):
             os.remove(temporary)
+
+
+def export_exact_cut(
+    project: ProjectState,
+    output_path: str,
+    progress_callback: Optional[Callable[[int], None]] = None,
+    should_cancel: Optional[Callable[[], bool]] = None,
+) -> bool:
+    """精確剪輯：重新編碼並裁切至工作區間，不套用任何遮蔽或字幕，也不更動原專案。"""
+    plain = dataclasses.replace(project, tracks=[], subtitles=[])
+    return RenderExporter.render_export(plain, output_path, progress_callback, should_cancel)
 
 
 class FastCopyExporter:

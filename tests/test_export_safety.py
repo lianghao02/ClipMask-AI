@@ -170,3 +170,19 @@ def test_fast_copy_worker_reports_result(tmp_path):
     worker.run()
     assert results == [(True, str(output))]
     assert output.exists()
+
+
+def test_exact_cut_trims_precisely_and_ignores_masks(tmp_path, monkeypatch):
+    from clipmask.export.exporter import export_exact_cut
+    from clipmask.models.project import Keyframe, Track
+    source, output = tmp_path / "source.mp4", tmp_path / "exact.mp4"
+    _make_video(source, 60)  # 10 fps、6 秒
+    project = ProjectState(source=SourceMetadata(str(source), 64, 48, 10.0, 6.0), work_range=WorkRange(2.0, 4.0))
+    project.tracks = [Track(id="t", keyframes=[Keyframe(0, rect_px=(0, 0, 64, 48)), Keyframe(6, rect_px=(0, 0, 64, 48))])]
+    project.subtitles = [{"id": "s", "start_sec": 0, "end_sec": 6, "text": "字幕"}]
+    monkeypatch.setattr(RenderExporter, "apply_mosaic_or_blur",
+                        staticmethod(lambda *a, **k: (_ for _ in ()).throw(AssertionError("不應套用遮蔽"))))
+    assert export_exact_cut(project, str(output))
+    with av.open(str(output)) as container:
+        assert sum(1 for _ in container.decode(video=0)) == 20
+    assert len(project.tracks) == 1 and len(project.subtitles) == 1  # 不改動原專案

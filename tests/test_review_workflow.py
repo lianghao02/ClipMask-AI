@@ -298,3 +298,36 @@ def test_track_forward_reports_failure_when_target_never_tracked(monkeypatch):
     count = len(track.keyframes)
     assert MicroTracker.track_forward(FakeSource(), track) is False
     assert len(track.keyframes) == count
+
+
+def test_step_guide_follows_workflow_state(window):
+    def guide():
+        return window.lbl_step_guide.text()
+
+    assert "開啟影片" in guide()
+    window.video_source = SimpleNamespace(current_time=0, current_pts=0, width=640, height=480,
+                                          duration=10, time_base=Fraction(1, 10))
+    window.seek_to = lambda seconds: None
+    window.project.work_range = WorkRange(2, 8)
+    window._refresh_track_list()
+    assert "目前：②" in guide() and "2.0" in guide() and "8.0" in guide()
+
+    track = make_track()
+    track.keyframes = [Keyframe(t, rect_px=(10, 10, 20, 20)) for t in (2, 4, 6, 8)]
+    window.project.tracks = [track]
+    window._refresh_track_list()
+    assert "目前：③" in guide() and "1 條" in guide()
+
+    window._set_all_tracks_reviewed(True)
+    assert "目前：④" in guide()
+
+    window.set_work_mode("cut")
+    assert "剪輯" in guide() and "目前：④" not in guide()
+
+
+def test_secondary_modes_are_collapsed_into_more_menu(window):
+    assert window.btn_mode_transcribe.isHidden() and window.btn_mode_full.isHidden()
+    labels = [action.text() for action in window.btn_more_modes.menu().actions()]
+    assert any("字幕" in label for label in labels) and any("完整" in label for label in labels)
+    window.btn_more_modes.menu().actions()[0].trigger()
+    assert window.current_work_mode == "transcribe"

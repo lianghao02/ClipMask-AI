@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QFileDialog, QListWidget, QListWidgetItem, QLabel, QGroupBox,
     QMessageBox, QSplitter, QProgressBar, QComboBox, QSpinBox,
-    QLineEdit, QProgressDialog, QButtonGroup, QScrollArea, QFrame
+    QLineEdit, QProgressDialog, QButtonGroup, QScrollArea, QFrame, QMenu
 )
 from PySide6.QtGui import QImage, QKeySequence, QShortcut, QDragEnterEvent, QDropEvent, QIcon, QColor
 from PySide6.QtCore import Qt, QThread, Signal, Slot, QUrl
@@ -26,7 +26,7 @@ from ..track.coverage import CoverageAnalyzer
 from ..ai.detector import FaceDetector, renumber_ai_tracks
 from ..ai.subtitles import SubtitleManager, SubtitleItem
 from ..ai.vad import VoiceActivityDetector, SpeechSegment
-from ..export.exporter import FastCopyExporter, RenderExporter, validate_destination
+from ..export.exporter import FastCopyExporter, RenderExporter, export_exact_cut, validate_destination
 
 # ── 1. 播放背景 Worker (Master Clock 精確畫面同步) ──
 class PlaybackWorker(QThread):
@@ -140,6 +140,20 @@ class ExportWorker(QThread):
         except Exception as e:
             self.finished.emit(False, str(e))
 
+# ── 3a. 精確剪輯背景 Worker（重新編碼、不遮蔽） ──
+class ExactCutWorker(ExportWorker):
+    def run(self):
+        try:
+            success = export_exact_cut(
+                self.project,
+                self.output_path,
+                progress_callback=self.progress.emit,
+                should_cancel=lambda: self._is_cancelled
+            )
+            self.finished.emit(success, self.output_path)
+        except Exception as e:
+            self.finished.emit(False, str(e))
+
 # ── 3b. 快速剪輯背景 Worker（避免大檔案凍結介面） ──
 class FastCopyWorker(QThread):
     finished = Signal(bool, str)
@@ -247,7 +261,7 @@ class MainWindow(QMainWindow):
         self.mode_group = QButtonGroup(self)
         self.mode_group.setExclusive(True)
 
-        self.btn_mode_mask = QPushButton("🎭 人臉去識別")
+        self.btn_mode_mask = QPushButton("🎭 去識別")
         self.btn_mode_mask.setCheckable(True)
         self.btn_mode_mask.setProperty("class", "mode-btn")
         self.btn_mode_mask.setChecked(True)
@@ -262,12 +276,12 @@ class MainWindow(QMainWindow):
         self.btn_mode_transcribe.setToolTip("VAD 語音活動對齊、聽打文字、字幕拖曳微調與 SRT 匯出")
         self.btn_mode_transcribe.clicked.connect(lambda: self.set_work_mode("transcribe"))
         self.mode_group.addButton(self.btn_mode_transcribe)
-        top_bar.addWidget(self.btn_mode_transcribe)
+        self.btn_mode_transcribe.hide()  # 少用模式收進「更多」選單
 
-        self.btn_mode_cut = QPushButton("✂️ 快速剪輯")
+        self.btn_mode_cut = QPushButton("✂️ 剪輯")
         self.btn_mode_cut.setCheckable(True)
         self.btn_mode_cut.setProperty("class", "mode-btn")
-        self.btn_mode_cut.setToolTip("專注畫面與時間軸，設定 In/Out 點無損秒出")
+        self.btn_mode_cut.setToolTip("專注畫面與時間軸，設定 In/Out 點後選擇快速剪輯或精確剪輯")
         self.btn_mode_cut.clicked.connect(lambda: self.set_work_mode("cut"))
         self.mode_group.addButton(self.btn_mode_cut)
         top_bar.addWidget(self.btn_mode_cut)
@@ -278,7 +292,16 @@ class MainWindow(QMainWindow):
         self.btn_mode_full.setToolTip("展開全部控制項（去識別、聽打、剪輯）")
         self.btn_mode_full.clicked.connect(lambda: self.set_work_mode("full"))
         self.mode_group.addButton(self.btn_mode_full)
-        top_bar.addWidget(self.btn_mode_full)
+        self.btn_mode_full.hide()
+
+        self.btn_more_modes = QPushButton("更多 ▾")
+        self.btn_more_modes.setProperty("class", "mode-btn")
+        self.btn_more_modes.setToolTip("切換到字幕聽打或完整工作站")
+        more_menu = QMenu(self.btn_more_modes)
+        more_menu.addAction("🎙️ 字幕聽打", lambda: self.set_work_mode("transcribe"))
+        more_menu.addAction("🎛️ 完整工作站", lambda: self.set_work_mode("full"))
+        self.btn_more_modes.setMenu(more_menu)
+        top_bar.addWidget(self.btn_more_modes)
 
         top_bar.addSpacing(12)
 
@@ -296,17 +319,22 @@ class MainWindow(QMainWindow):
         top_bar.addSpacing(10)
 
         # 核心主按鈕：匯出馬賽克去識別影片
-        self.btn_render_export = QPushButton("🛡️ 匯出馬賽克影片 (壓制遮蔽)")
+        self.btn_render_export = QPushButton("🛡️ 匯出馬賽克影片")
         self.btn_render_export.setToolTip("將影片連同所有 AI/手動馬賽克與聽打字幕一起壓制輸出（若有選取區間則只輸出該區間）")
         self.btn_render_export.setObjectName("btn_primary")
         self.btn_render_export.clicked.connect(self.export_render)
         top_bar.addWidget(self.btn_render_export)
 
         # 輔助次按鈕：純剪輯無碼秒出
-        self.btn_fast_export = QPushButton("⚡ 快速串流剪輯 (不套用遮蔽)")
+        self.btn_fast_export = QPushButton("⚡ 快速剪輯")
         self.btn_fast_export.setToolTip("直接複製串流，不套用遮蔽或字幕；起點可能回退到前一個關鍵影格")
         self.btn_fast_export.clicked.connect(self.export_fast_copy)
         top_bar.addWidget(self.btn_fast_export)
+
+        self.btn_exact_cut = QPushButton("🎯 精確剪輯")
+        self.btn_exact_cut.setToolTip("重新編碼並精準裁切到所選區間，不套用遮蔽或字幕；耗時較長")
+        self.btn_exact_cut.clicked.connect(self.export_exact_cut_video)
+        top_bar.addWidget(self.btn_exact_cut)
 
         top_bar.addStretch()
         # 窄視窗時只捲動工具列，避免完整工作站按鈕把整個視窗撐出螢幕。
@@ -320,6 +348,12 @@ class MainWindow(QMainWindow):
         self.toolbar_scroll.setWidget(toolbar_widget)
         self.toolbar_scroll.setFixedHeight(toolbar_widget.sizeHint().height() + self.toolbar_scroll.horizontalScrollBar().sizeHint().height())
         left_layout.addWidget(self.toolbar_scroll)
+
+        self.lbl_step_guide = QLabel()
+        self.lbl_step_guide.setTextFormat(Qt.TextFormat.RichText)
+        self.lbl_step_guide.setWordWrap(True)
+        self.lbl_step_guide.setStyleSheet("padding: 6px 8px; border-radius: 6px; background: #f3efe6;")
+        left_layout.addWidget(self.lbl_step_guide)
 
         self.lbl_safety_status = QLabel("⚪ 請先載入影片，再建立或檢查遮蔽軌跡。")
         self.lbl_safety_status.setWordWrap(True)
@@ -531,6 +565,11 @@ class MainWindow(QMainWindow):
         self.btn_mode_transcribe.setChecked(mode == "transcribe")
         self.btn_mode_cut.setChecked(mode == "cut")
         self.btn_mode_full.setChecked(mode == "full")
+        if hasattr(self, "btn_more_modes"):
+            self.btn_more_modes.setText({"transcribe": "字幕聽打 ▾", "full": "完整工作站 ▾"}.get(mode, "更多 ▾"))
+            self.btn_more_modes.setStyleSheet("font-weight: 700;" if mode in ("transcribe", "full") else "")
+        if hasattr(self, "lbl_step_guide"):
+            self._update_step_guide()
 
         # 時間軸控制項開合
         self.timeline.set_mode(mode)
@@ -540,6 +579,7 @@ class MainWindow(QMainWindow):
             self.btn_toggle_preview.show()
             self.btn_render_export.show()
             self.btn_fast_export.hide()
+            self.btn_exact_cut.hide()
 
             self.right_widget.show()
             self.grp_tracks.show()
@@ -549,6 +589,7 @@ class MainWindow(QMainWindow):
             self.btn_toggle_preview.hide()
             self.btn_render_export.show()
             self.btn_fast_export.hide()
+            self.btn_exact_cut.hide()
 
             self.right_widget.show()
             self.grp_tracks.hide()
@@ -558,6 +599,7 @@ class MainWindow(QMainWindow):
             self.btn_toggle_preview.hide()
             self.btn_render_export.hide()
             self.btn_fast_export.show()
+            self.btn_exact_cut.show()
 
             self.right_widget.hide()
         else:  # full
@@ -565,6 +607,7 @@ class MainWindow(QMainWindow):
             self.btn_toggle_preview.show()
             self.btn_render_export.show()
             self.btn_fast_export.show()
+            self.btn_exact_cut.show()
 
             self.right_widget.show()
             self.grp_tracks.show()
@@ -1113,6 +1156,7 @@ class MainWindow(QMainWindow):
         self._refresh_track_list()
 
     def _update_review_summary(self):
+        self._update_step_guide()
         total = len(self.project.tracks)
         reviewed = sum(1 for track in self.project.tracks if track.reviewed)
         pending = total - reviewed
@@ -1141,10 +1185,49 @@ class MainWindow(QMainWindow):
 
     def _update_action_state(self):
         has_video = self.video_source is not None
-        for button in (self.btn_ai_detect, self.btn_toggle_preview, self.btn_render_export, self.btn_fast_export):
+        for button in (self.btn_ai_detect, self.btn_toggle_preview, self.btn_render_export, self.btn_fast_export, self.btn_exact_cut):
             button.setEnabled(has_video)
 
+    def _update_step_guide(self):
+        """依目前狀態顯示流程步驟與下一步；僅提示，不改變任何資料。"""
+        def render(steps, current, hint):
+            parts = []
+            for index, name in enumerate(steps, start=1):
+                if index < current:
+                    parts.append(f'<span style="color:#3b5941;">✓ {name}</span>')
+                elif index == current:
+                    parts.append(f'<b style="color:#8a3b2e;">▶ {name}</b>')
+                else:
+                    parts.append(f'<span style="color:#a8a29e;">{name}</span>')
+            return "　→　".join(parts) + f'<br><span style="color:#57534e;">{hint}</span>'
+
+        if not self.video_source or not self.project.work_range:
+            self.lbl_step_guide.setText(render(["開啟影片"], 1, "點「開啟」或把影片拖進視窗。"))
+            return
+        work = self.project.work_range
+        span = f"目前區間 {work.in_time:.1f}s ～ {work.out_time:.1f}s（{work.out_time - work.in_time:.1f} 秒），偵測與匯出只處理這一段。"
+        if self.current_work_mode == "cut":
+            self.lbl_step_guide.setText(render(
+                ["① 設定區間", "② 匯出剪輯"], 2,
+                f"{span}快速剪輯不重新編碼，起點可能提早；要精準起訖請用精確剪輯。"))
+            return
+        steps = ["① 設定區間", "② AI 偵測／手動框選", "③ 確認軌跡", "④ 匯出"]
+        tracks = self.project.tracks
+        pending = sum(1 for track in tracks if not track.reviewed)
+        if not tracks:
+            current, hint = 2, f"{span}先按「AI 偵測人臉」，或在畫面上拖曳框選。"
+        elif pending:
+            current, hint = 3, f"還有 {pending} 條遮蔽未確認，逐條檢查後在右側清單勾選「已確認」。"
+        else:
+            report = CoverageAnalyzer.analyze(tracks, work.in_time, work.out_time)
+            if report.is_safe_to_continue:
+                current, hint = 4, f"{span}可以按「匯出馬賽克影片」。"
+            else:
+                current, hint = 3, f"遮蔽有 {len(report.messages)} 項缺口，請補關鍵影格或用「常駐全段」後再匯出。"
+        self.lbl_step_guide.setText(render(steps, current, hint).replace("▶ ", f"▶ 目前：", 1))
+
     def _update_safety_status(self):
+        self._update_step_guide()
         if not self.video_source or not self.project.work_range:
             return
         report = CoverageAnalyzer.analyze(self.project.tracks, self.project.work_range.in_time, self.project.work_range.out_time)
@@ -1478,6 +1561,47 @@ class MainWindow(QMainWindow):
         self.fast_copy_worker.finished.connect(on_fast_copy_finished)
         self.fast_copy_worker.start()
 
+    def export_exact_cut_video(self):
+        self._stop_playback()
+        if not self.video_source or not self.project.source:
+            return
+        answer = QMessageBox.warning(self, "精確剪輯", "此模式會重新編碼並精準裁切，但不套用任何馬賽克或字幕，輸出不具去識別化效果。\n\n是否繼續？", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Cancel)
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        time_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base, _ = os.path.splitext(self._generate_default_export_name(mode="fast"))
+        out_path, _ = QFileDialog.getSaveFileName(self, "儲存精確剪輯影片 (無馬賽克)", f"{base}_exact_{time_str}.mp4", "MP4 Files (*.mp4)")
+        if not out_path:
+            return
+        try:
+            validate_destination(self.project.source.path, out_path)
+        except ValueError as e:
+            QMessageBox.critical(self, "匯出失敗", str(e))
+            return
+
+        progress_dialog = QProgressDialog("正在精確剪輯影片，請稍候...", "取消", 0, 100, self)
+        progress_dialog.setWindowTitle("精確剪輯中")
+        progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        progress_dialog.setAutoClose(True)
+        progress_dialog.setMinimumDuration(0)
+
+        self.exact_cut_worker = ExactCutWorker(self.project, out_path)
+        self.exact_cut_worker.progress.connect(progress_dialog.setValue)
+        progress_dialog.canceled.connect(self.exact_cut_worker.cancel)
+
+        def on_finished(success, msg):
+            progress_dialog.close()
+            if success:
+                QMessageBox.information(self, "匯出成功", f"精確剪輯完成！已儲存至：\n{msg}")
+            elif self.exact_cut_worker and self.exact_cut_worker._is_cancelled:
+                QMessageBox.information(self, "已取消匯出", "已停止剪輯，並清除未完成輸出檔。")
+            else:
+                QMessageBox.critical(self, "匯出失敗", f"精確剪輯失敗:\n{msg}")
+
+        self.exact_cut_worker.finished.connect(on_finished)
+        self.exact_cut_worker.start()
+
     def export_render(self):
         self._stop_playback()
         if not self.video_source or not self.project.source:
@@ -1516,7 +1640,7 @@ class MainWindow(QMainWindow):
         self._stop_playback()
         if hasattr(self, "media_player") and self.media_player:
             self.media_player.stop()
-        for worker_name in ("ai_worker", "export_worker", "fast_copy_worker", "vad_worker"):
+        for worker_name in ("ai_worker", "export_worker", "exact_cut_worker", "fast_copy_worker", "vad_worker"):
             w = getattr(self, worker_name, None)
             if w and w.isRunning():
                 if hasattr(w, "cancel"):
