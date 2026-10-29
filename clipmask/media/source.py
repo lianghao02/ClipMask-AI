@@ -3,6 +3,7 @@ ClipMask-AI Video Source & Seek Controller
 使用 PyAV 提供幀精確解碼與三段式 Seek。
 """
 import av
+from fractions import Fraction
 import numpy as np
 from PIL import Image
 from typing import Optional, Tuple, Generator
@@ -19,12 +20,14 @@ class VideoSource:
         self.height = self.stream.codec_context.height
         self.time_base = float(self.stream.time_base)
         
+        # 保留精確有理數幀率（如 30000/1001），供匯出避免取整造成音畫漂移。
         if self.stream.average_rate and 1.0 <= float(self.stream.average_rate) <= 120.0:
-            self.fps = float(self.stream.average_rate)
+            self.fps_fraction = Fraction(self.stream.average_rate)
         elif self.stream.base_rate and 1.0 <= float(self.stream.base_rate) <= 120.0:
-            self.fps = float(self.stream.base_rate)
+            self.fps_fraction = Fraction(self.stream.base_rate)
         else:
-            self.fps = 30.0
+            self.fps_fraction = Fraction(30)
+        self.fps = float(self.fps_fraction)
             
         if self.stream.duration:
             self.duration = float(self.stream.duration * self.time_base)

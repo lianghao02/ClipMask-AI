@@ -23,10 +23,10 @@ from ..models.project import ProjectState, Track, Keyframe, MaskConfig, WorkRang
 from ..media.source import VideoSource, ThumbnailExtractor
 from ..track.tracker import MicroTracker
 from ..track.coverage import CoverageAnalyzer
-from ..ai.detector import FaceDetector
+from ..ai.detector import FaceDetector, renumber_ai_tracks
 from ..ai.subtitles import SubtitleManager, SubtitleItem
 from ..ai.vad import VoiceActivityDetector, SpeechSegment
-from ..export.exporter import FastCopyExporter, RenderExporter
+from ..export.exporter import FastCopyExporter, RenderExporter, validate_destination
 
 # ── 1. 播放背景 Worker (Master Clock 精確畫面同步) ──
 class PlaybackWorker(QThread):
@@ -101,10 +101,13 @@ class AiDetectWorker(QThread):
                 self.in_time,
                 self.out_time,
                 step_sec=0.25,
-                progress_callback=lambda p: self.progress.emit(p)
+                progress_callback=lambda p: self.progress.emit(p),
+                should_cancel=lambda: self._is_cancelled
             )
             source.close()
-            self.finished.emit(tracks)
+            # 使用者已取消時不回傳部分結果，避免未完成的軌跡被加入專案。
+            if not self._is_cancelled:
+                self.finished.emit(tracks)
         except Exception as e:
             self.error.emit(str(e))
 
@@ -134,6 +137,24 @@ class ExportWorker(QThread):
                 should_cancel=lambda: self._is_cancelled
             )
             self.finished.emit(success, self.output_path)
+        except Exception as e:
+            self.finished.emit(False, str(e))
+
+# ── 3b. 快速剪輯背景 Worker（避免大檔案凍結介面） ──
+class FastCopyWorker(QThread):
+    finished = Signal(bool, str)
+
+    def __init__(self, source_path: str, in_time: float, out_time: float, output_path: str):
+        super().__init__()
+        self.source_path = source_path
+        self.in_time = in_time
+        self.out_time = out_time
+        self.output_path = output_path
+
+    def run(self):
+        try:
+            ok = FastCopyExporter.export(self.source_path, self.in_time, self.out_time, self.output_path)
+            self.finished.emit(ok, self.output_path)
         except Exception as e:
             self.finished.emit(False, str(e))
 
@@ -1008,7 +1029,7 @@ class MainWindow(QMainWindow):
             self.seek_to(self.video_source.current_time)
             QMessageBox.information(self, "追蹤完成", f"已為 [{track.label}] 向後預測建立關鍵影格！")
         else:
-            QMessageBox.warning(self, "追蹤失敗", "追蹤器無法初始化。")
+            QMessageBox.warning(self, "追蹤失敗", "追蹤器無法追到此遮蔽目標（目標遺失或無法初始化），未建立關鍵影格。請手動補上關鍵影格。")
 
     def run_ai_face_detection(self):
         self._stop_playback()
@@ -1033,6 +1054,7 @@ class MainWindow(QMainWindow):
         def on_ai_finished(tracks):
             progress_dialog.close()
             if tracks:
+                renumber_ai_tracks(tracks, self.project.tracks)
                 self.project.tracks.extend(tracks)
                 self._refresh_track_list()
                 self.seek_to(in_t)
@@ -1365,6 +1387,7 @@ class MainWindow(QMainWindow):
             target = track.keyframes[0] if is_start else track.keyframes[-1]
             target.time = self.video_source.current_time
             track.keyframes.sort(key=lambda item: item.time)
+            track.reviewed = False  # 起訖已變動，需重新人工確認
             self._refresh_track_list()
 
     def _reset_context_range(self):
@@ -1432,11 +1455,28 @@ class MainWindow(QMainWindow):
             
         in_t = self.project.work_range.in_time if self.project.work_range else 0.0
         out_t = self.project.work_range.out_time if self.project.work_range else self.video_source.duration
-        success = FastCopyExporter.export(self.project.source.path, in_t, out_t, out_path)
-        if success:
-            QMessageBox.information(self, "匯出成功", f"剪輯完成！已儲存至：\n{out_path}")
-        else:
-            QMessageBox.critical(self, "匯出失敗", "快速剪輯執行失敗。")
+        try:
+            validate_destination(self.project.source.path, out_path)
+        except ValueError as e:
+            QMessageBox.critical(self, "匯出失敗", str(e))
+            return
+
+        busy_dialog = QProgressDialog("正在快速剪輯影片，請稍候...", None, 0, 0, self)
+        busy_dialog.setWindowTitle("快速剪輯中")
+        busy_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        busy_dialog.setMinimumDuration(0)
+
+        self.fast_copy_worker = FastCopyWorker(self.project.source.path, in_t, out_t, out_path)
+
+        def on_fast_copy_finished(success, msg):
+            busy_dialog.close()
+            if success:
+                QMessageBox.information(self, "匯出成功", f"剪輯完成！已儲存至：\n{msg}")
+            else:
+                QMessageBox.critical(self, "匯出失敗", "快速剪輯執行失敗，來源與既有檔案未被更動。")
+
+        self.fast_copy_worker.finished.connect(on_fast_copy_finished)
+        self.fast_copy_worker.start()
 
     def export_render(self):
         self._stop_playback()
@@ -1476,7 +1516,7 @@ class MainWindow(QMainWindow):
         self._stop_playback()
         if hasattr(self, "media_player") and self.media_player:
             self.media_player.stop()
-        for worker_name in ("ai_worker", "export_worker", "vad_worker"):
+        for worker_name in ("ai_worker", "export_worker", "fast_copy_worker", "vad_worker"):
             w = getattr(self, worker_name, None)
             if w and w.isRunning():
                 if hasattr(w, "cancel"):

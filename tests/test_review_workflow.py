@@ -217,3 +217,84 @@ def test_render_export_uses_manual_rect_with_only_one_padding(tmp_path, monkeypa
     assert used_rects and all(rect == (90, 40, 60, 60) for rect in used_rects)
     with av.open(str(output)) as container:
         assert len(list(container.decode(video=0))) >= 5
+
+
+def test_editing_keyframes_invalidates_review():
+    """已確認的軌跡一經修改就必須回到待檢查，否則改動後的內容未經人工看過。"""
+    track = make_track()
+    track.reviewed = True
+    track.add_or_update_keyframe(1, (120, 100, 60, 60), source="manual")
+    assert not track.reviewed
+    track.reviewed = True
+    assert track.remove_keyframe_at(1)
+    assert not track.reviewed
+    track.reviewed = True
+    track.add_or_update_keyframe(0, (0, 0, 9, 9), source="tracker")  # 覆蓋手動以外的來源
+    assert not track.reviewed
+    track.reviewed = True
+    assert not track.remove_keyframe_at(50)  # 沒有實際變動時維持已確認
+    assert track.reviewed
+
+
+def test_ai_scan_stops_when_cancelled():
+    class FakeSource:
+        fps, time_base, current_pts = 10.0, 0.1, 0
+
+        def __init__(self):
+            self.current_time, self.reads = 0.0, 0
+
+        def seek_exact(self, seconds):
+            self.current_time = seconds
+
+        def read_next_frame(self):
+            self.reads += 1
+            self.current_time = (self.reads - 1) / 10.0
+            return np.zeros((10, 10, 3), dtype=np.uint8) if self.reads <= 100 else None
+
+    detector = FaceDetector.__new__(FaceDetector)
+    detector.detect_in_frame = lambda frame: [(1, 1, 5, 5)]
+    source = FakeSource()
+    tracks = detector.scan_work_range(source, 0.0, 10.0, should_cancel=lambda: source.reads >= 3)
+    assert source.reads <= 4
+    assert tracks is not None
+
+
+def test_renumber_ai_tracks_avoids_id_and_label_collisions():
+    from clipmask.ai.detector import renumber_ai_tracks
+    existing = [make_track("ai_person_1"), make_track("ai_person_2")]
+    fresh = [make_track("ai_person_1"), make_track("ai_person_2")]
+    fresh[0].label, fresh[1].label = "人物 1 (0s起)", "人物 2 (3s起)"
+    renumber_ai_tracks(fresh, existing)
+    ids = [t.id for t in existing + fresh]
+    assert len(set(ids)) == 4
+    assert [t.label for t in fresh] == ["人物 3 (0s起)", "人物 4 (0s起)"]
+
+
+def test_track_forward_reports_failure_when_target_never_tracked(monkeypatch):
+    import cv2
+    from clipmask.track.tracker import MicroTracker
+
+    class FakeTracker:
+        def init(self, frame, box): pass
+        def update(self, frame): return False, None
+
+    monkeypatch.setattr(cv2, "TrackerCSRT_create", lambda: FakeTracker(), raising=False)
+
+    class FakeSource:
+        duration, current_pts = 5.0, 0
+
+        def __init__(self):
+            self.current_time, self.reads = 1.0, 0
+
+        def seek_exact(self, seconds):
+            return np.zeros((100, 100, 3), dtype=np.uint8)
+
+        def read_next_frame(self):
+            self.reads += 1
+            self.current_time = 1.0 + self.reads / 10.0
+            return np.zeros((100, 100, 3), dtype=np.uint8) if self.reads < 30 else None
+
+    track = make_track()
+    count = len(track.keyframes)
+    assert MicroTracker.track_forward(FakeSource(), track) is False
+    assert len(track.keyframes) == count

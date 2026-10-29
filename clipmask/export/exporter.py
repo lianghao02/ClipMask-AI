@@ -29,13 +29,19 @@ def _get_canonical_audio_layout(stream) -> str:
     return "stereo"
 
 
-@contextmanager
-def _export_destination(source_path: str, output_path: str):
-    """只在成功後替換目標；來源與既有輸出在失敗時維持原狀。"""
+def validate_destination(source_path: str, output_path: str) -> None:
+    """匯出位置不可與來源相同（含硬連結）；供介面在背景匯出前先行檢查並說明原因。"""
     source = Path(source_path).resolve()
     output = Path(output_path).resolve()
     if source == output or (output.exists() and os.path.samefile(source, output)):
         raise ValueError("匯出位置不可與來源影音檔相同，請另選檔名。")
+
+
+@contextmanager
+def _export_destination(source_path: str, output_path: str):
+    """只在成功後替換目標；來源與既有輸出在失敗時維持原狀。"""
+    validate_destination(source_path, output_path)
+    output = Path(output_path).resolve()
     descriptor, temporary = tempfile.mkstemp(
         prefix=f".{output.stem}.", suffix=output.suffix, dir=output.parent
     )
@@ -163,7 +169,7 @@ class RenderExporter:
         output_container = av.open(output_path, mode="w")
         resources.callback(output_container.close)
         cancelled = False
-        stream = output_container.add_stream("h264", rate=int(round(source.fps)))
+        stream = output_container.add_stream("h264", rate=source.fps_fraction)
         stream.width = source.width
         stream.height = source.height
         stream.pix_fmt = "yuv420p"
@@ -199,6 +205,7 @@ class RenderExporter:
         source.seek_exact(in_t)
         
         frame_idx = 0
+        last_video_pts = -1
         while True:
             if should_cancel and should_cancel():
                 cancelled = True
@@ -225,6 +232,9 @@ class RenderExporter:
                     frame = SubtitleManager.draw_subtitle_on_image(frame, sub_text)
 
             av_frame = av.VideoFrame.from_ndarray(frame, format="rgb24")
+            # 以來源時間換算輸出 pts（單位 1/幀率），變動幀率來源才不會被拉成等間隔。
+            last_video_pts = max(last_video_pts + 1, int(round((cur_t - in_t) * float(source.fps_fraction))))
+            av_frame.pts = last_video_pts
             for packet in stream.encode(av_frame):
                 output_container.mux(packet)
 

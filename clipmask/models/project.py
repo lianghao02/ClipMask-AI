@@ -37,14 +37,19 @@ class Track:
                 kf.rect_px = rect_px
                 kf.pts = pts
                 kf.source = source
+                self.reviewed = False  # 內容已變動，需重新人工確認
                 return
         self.keyframes.append(Keyframe(time=time, pts=pts, rect_px=rect_px, source=source))
         self.keyframes.sort(key=lambda k: k.time)
+        self.reviewed = False
 
     def remove_keyframe_at(self, time: float, tolerance: float = 0.05) -> bool:
         before_len = len(self.keyframes)
         self.keyframes = [k for k in self.keyframes if abs(k.time - time) > tolerance]
-        return len(self.keyframes) < before_len
+        removed = len(self.keyframes) < before_len
+        if removed:
+            self.reviewed = False
+        return removed
 
 @dataclass
 class WorkRange:

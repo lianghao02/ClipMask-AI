@@ -123,3 +123,50 @@ def test_final_progress_failure_keeps_previous_destination(tmp_path):
         RenderExporter.render_export(_project(source), str(output), progress_callback=fail_at_completion)
     assert output.read_bytes() == b"previous export"
     assert len(list(tmp_path.iterdir())) == 2
+
+
+def test_render_keeps_fractional_frame_rate_timing(tmp_path):
+    """29.97 fps 不可被取整為 30 fps，否則長片影像會比音軌快。"""
+    from fractions import Fraction
+    source, output = tmp_path / "ntsc.mp4", tmp_path / "out.mp4"
+    container = av.open(str(source), "w")
+    stream = container.add_stream("h264", rate=Fraction(30000, 1001))
+    stream.width, stream.height, stream.pix_fmt = 64, 48, "yuv420p"
+    for index in range(600):
+        frame = av.VideoFrame.from_ndarray(np.full((48, 64, 3), index % 255, dtype=np.uint8), format="rgb24")
+        for packet in stream.encode(frame): container.mux(packet)
+    for packet in stream.encode(): container.mux(packet)
+    container.close()
+
+    def last_frame_time(path):
+        with av.open(str(path)) as c:
+            s = c.streams.video[0]
+            return max(float(f.pts * s.time_base) for f in c.decode(s) if f.pts is not None)
+
+    duration = last_frame_time(source) + 1.0
+    project = ProjectState(source=SourceMetadata(str(source), 64, 48, 30000 / 1001, duration),
+                           work_range=WorkRange(0.0, duration))
+    assert RenderExporter.render_export(project, str(output))
+    assert abs(last_frame_time(output) - last_frame_time(source)) < 0.005
+
+
+def test_validate_destination_explains_source_overwrite(tmp_path):
+    import pytest
+    from clipmask.export.exporter import validate_destination
+    source = tmp_path / "source.mp4"
+    _make_video(source)
+    with pytest.raises(ValueError, match="來源"):
+        validate_destination(str(source), str(source))
+    validate_destination(str(source), str(tmp_path / "other.mp4"))
+
+
+def test_fast_copy_worker_reports_result(tmp_path):
+    from clipmask.gui.main_window import FastCopyWorker
+    source, output = tmp_path / "source.mp4", tmp_path / "clip.mp4"
+    _make_video(source, 30)
+    results = []
+    worker = FastCopyWorker(str(source), 0.0, 1.0, str(output))
+    worker.finished.connect(lambda ok, path: results.append((ok, path)))
+    worker.run()
+    assert results == [(True, str(output))]
+    assert output.exists()

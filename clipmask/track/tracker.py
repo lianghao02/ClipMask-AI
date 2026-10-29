@@ -59,6 +59,7 @@ class MicroTracker:
         last_box = (x, y, w, h)
         last_t = start_time
         last_pts = video_source.current_pts
+        tracked_any = False
         
         # 逐幀追蹤
         total_time = end_time - start_time
@@ -72,12 +73,19 @@ class MicroTracker:
             if ok:
                 bx, by, bw, bh = [int(v) for v in bbox]
                 last_box = (bx, by, bw, bh)
+                tracked_any = True
                 last_t = video_source.current_time
                 last_pts = video_source.current_pts
                 
             if progress_callback and total_time > 0:
                 pct = int(((video_source.current_time - start_time) / total_time) * 100)
                 progress_callback(min(99, max(0, pct)))
+
+        # 目標從未被追蹤到時不建立關鍵影格，並回報失敗讓使用者手動補點。
+        if not tracked_any:
+            if progress_callback:
+                progress_callback(100)
+            return False
 
         # 在追蹤終點建立/更新 Keyframe
         track.add_or_update_keyframe(

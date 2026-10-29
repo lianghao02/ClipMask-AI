@@ -14,6 +14,20 @@ from typing import List, Tuple, Callable, Optional
 from ..models.project import Track, Keyframe, MaskConfig
 from ..media.source import VideoSource
 
+def renumber_ai_tracks(new_tracks: List[Track], existing_tracks: List[Track]) -> None:
+    """重新編號新偵測的軌跡，避免重複執行 AI 偵測時 id 與標籤與既有軌跡重複。"""
+    used = {track.id for track in existing_tracks}
+    number = len(existing_tracks) + 1
+    for track in new_tracks:
+        while f"ai_person_{number}" in used:
+            number += 1
+        track.id = f"ai_person_{number}"
+        start = int(track.keyframes[0].time) if track.keyframes else 0
+        track.label = f"人物 {number} ({start}s起)"
+        used.add(track.id)
+        number += 1
+
+
 class FaceDetector:
     def __init__(self, model_path: Optional[str] = None, conf_threshold: float = 0.35):
         if not model_path:
@@ -86,7 +100,8 @@ class FaceDetector:
         in_time: float,
         out_time: float,
         step_sec: float = 0.25,
-        progress_callback: Optional[Callable[[int], None]] = None
+        progress_callback: Optional[Callable[[int], None]] = None,
+        should_cancel: Optional[Callable[[], bool]] = None
     ) -> List[Track]:
         """
         以高頻率掃描多目標人臉，並自動聚合連續軌跡、填補轉頭/低頭間隙
@@ -97,6 +112,8 @@ class FaceDetector:
         total_time = max(0.1, out_time - in_time)
         
         while True:
+            if should_cancel and should_cancel():
+                return active_tracks
             frame_rgb = video_source.read_next_frame()
             if frame_rgb is None:
                 break
