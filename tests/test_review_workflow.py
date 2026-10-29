@@ -385,3 +385,56 @@ def test_warning_text_does_not_claim_zero_uncovered_seconds(window):
     assert "0.0 秒" not in window.lbl_safety_status.text()
     assert "0.0 秒" not in window.lbl_step_guide.text()
     assert "提醒" in window.lbl_safety_status.text()
+
+
+def _plain_track(track_id, times, rect, label=None):
+    return Track(id=track_id, label=label or track_id, type="face",
+                 keyframes=[Keyframe(t, rect_px=rect, source="face_detector") for t in times])
+
+
+def test_merge_joins_adjacent_nearby_tracks_and_fills_gap():
+    from clipmask.ai.detector import merge_adjacent_tracks
+    first = _plain_track("a", [0.0, 1.0, 2.0], (100, 100, 50, 50))
+    second = _plain_track("b", [5.0, 6.0, 7.0], (110, 105, 50, 50))
+    merged = merge_adjacent_tracks([first, second])
+    assert len(merged) == 1 and merged[0].auto_merged
+    times = [kf.time for kf in merged[0].keyframes]
+    assert times[0] == 0.0 and times[-1] == 7.0
+    assert max(b - a for a, b in zip(times, times[1:])) <= 2.0  # 補點後不會觸發關鍵影格間隔阻擋
+    assert any(kf.source == "merge_fill" for kf in merged[0].keyframes)
+    assert CoverageAnalyzer_ok(merged[0])
+
+
+def CoverageAnalyzer_ok(track):
+    from clipmask.track.coverage import CoverageAnalyzer
+    return not CoverageAnalyzer.analyze([track], 0.0, 7.0).critical
+
+
+def test_merge_keeps_far_overlapping_or_distant_in_time_tracks_separate():
+    from clipmask.ai.detector import merge_adjacent_tracks
+    base = _plain_track("a", [0.0, 1.0, 2.0], (100, 100, 50, 50))
+    far = _plain_track("far", [4.0, 5.0], (500, 300, 50, 50))          # 距離太遠
+    overlap = _plain_track("overlap", [1.5, 2.5], (105, 100, 50, 50))  # 與前一條時間重疊
+    late = _plain_track("late", [20.0, 21.0], (105, 100, 50, 50))      # 間隔超過 6 秒
+    merged = merge_adjacent_tracks([base, far, overlap, late])
+    assert len(merged) == 4 and not any(t.auto_merged for t in merged)
+
+
+def test_merge_picks_nearest_chain_and_renumber_keeps_marker():
+    from clipmask.ai.detector import merge_adjacent_tracks, renumber_ai_tracks
+    left = _plain_track("left", [0.0, 1.0, 2.0], (100, 100, 50, 50))
+    right = _plain_track("right", [0.0, 1.0, 2.0], (200, 100, 50, 50))
+    joiner = _plain_track("joiner", [4.0, 5.0], (205, 100, 50, 50))
+    merged = merge_adjacent_tracks([left, right, joiner])
+    assert len(merged) == 2
+    assert merged[1].auto_merged and not merged[0].auto_merged
+    renumber_ai_tracks(merged, [])
+    assert "已自動合併" in merged[1].label and "已自動合併" not in merged[0].label
+
+
+def test_auto_merged_flag_survives_project_json_roundtrip():
+    from clipmask.models.project import ProjectState
+    track = _plain_track("a", [0.0, 1.0], (1, 1, 5, 5))
+    track.auto_merged = True
+    restored = ProjectState.from_json(ProjectState(tracks=[track]).to_json())
+    assert restored.tracks[0].auto_merged

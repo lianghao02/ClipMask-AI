@@ -24,6 +24,7 @@ class Track:
     type: str = "manual"  # face | plate | manual
     enabled: bool = True
     reviewed: bool = False
+    auto_merged: bool = False  # 由 AI 偵測後處理自動合併，需人工確認
     mask: MaskConfig = field(default_factory=MaskConfig)
     keyframes: List[Keyframe] = field(default_factory=list)
 
@@ -93,6 +94,7 @@ class ProjectState:
                 type=t_data.get("type", "manual"),
                 enabled=t_data.get("enabled", True),
                 reviewed=t_data.get("reviewed", False),
+                auto_merged=t_data.get("auto_merged", False),
                 mask=mask,
                 keyframes=kfs
             )

@@ -23,9 +23,54 @@ def renumber_ai_tracks(new_tracks: List[Track], existing_tracks: List[Track]) ->
             number += 1
         track.id = f"ai_person_{number}"
         start = int(track.keyframes[0].time) if track.keyframes else 0
-        track.label = f"人物 {number} ({start}s起)"
+        track.label = f"人物 {number} ({start}s起)" + (" ・已自動合併" if track.auto_merged else "")
         used.add(track.id)
         number += 1
+
+
+def merge_adjacent_tracks(
+    tracks: List[Track],
+    max_gap: float = 6.0,
+    distance_factor: float = 3.0,
+    fill_step: float = 2.0,
+) -> List[Track]:
+    """將前後相接、位置相近、時間不重疊的軌跡合併為同一人，降低逐條確認的負擔。
+
+    保守條件：間隔不超過 max_gap 秒，且前一條最後位置與後一條起點的距離小於
+    distance_factor 倍臉寬。合併處以線性補點（每 fill_step 秒一點），維持與
+    TrackEvaluator 內插一致，也不會觸發關鍵影格間隔過大的阻擋。
+    """
+    chains: List[Track] = []
+    for track in sorted(tracks, key=lambda item: item.keyframes[0].time if item.keyframes else 0.0):
+        if not track.keyframes:
+            chains.append(track)
+            continue
+        first = track.keyframes[0]
+        best, best_distance = None, float("inf")
+        for chain in chains:
+            last = chain.keyframes[-1]
+            gap = first.time - last.time
+            if gap < 0 or gap > max_gap:
+                continue
+            limit = max(last.rect_px[2], last.rect_px[3], first.rect_px[2], first.rect_px[3]) * distance_factor
+            distance = FaceDetector._center_distance(last.rect_px, first.rect_px)
+            if distance < limit and distance < best_distance:
+                best, best_distance = chain, distance
+        if best is None:
+            chains.append(track)
+            continue
+        last = best.keyframes[-1]
+        span = first.time - last.time
+        steps = int(span // fill_step)
+        for index in range(1, steps + 1):
+            alpha = index * fill_step / span
+            if alpha >= 1.0:
+                break
+            rect = tuple(int(round(a + alpha * (b - a))) for a, b in zip(last.rect_px, first.rect_px))
+            best.keyframes.append(Keyframe(time=last.time + index * fill_step, rect_px=rect, source="merge_fill"))
+        best.keyframes.extend(track.keyframes)
+        best.auto_merged = True
+    return chains
 
 
 class FaceDetector:
@@ -185,6 +230,9 @@ class FaceDetector:
                 pct = int(((cur_t - in_time) / total_time) * 100)
                 progress_callback(min(99, max(0, pct)))
                 
+
+        # ── 後處理：合併被拆開的同一人軌跡 ──
+        active_tracks = merge_adjacent_tracks(active_tracks)
 
         # ── 後處理：安全補齊與微調 (Post-processing) ──
         # 若某個人物在區間內持續出現超過 1 秒，若最後一顆關鍵影格距離 out_time 小於 1.5 秒，自動補齊至 out_time
