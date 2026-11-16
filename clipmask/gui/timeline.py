@@ -32,7 +32,7 @@ class HoverThumbnailPopup(QFrame):
         # 時間標籤
         self.lbl_time = QLabel("00:00:00.000")
         self.lbl_time.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_time.setStyleSheet("color: #ffffff; font-family: Consolas, monospace; font-size: 11px; font-weight: bold; background: rgba(0,0,0,160); border-radius: 3px; padding: 1px;")
+        self.lbl_time.setStyleSheet("color: #ffffff; font-family: Consolas, monospace; font-size: 12px; font-weight: bold; background: rgba(0,0,0,160); border-radius: 3px; padding: 1px;")
         layout.addWidget(self.lbl_time)
 
     def set_content(self, rgb_frame: Optional[np.ndarray], time_str: str):
@@ -208,17 +208,17 @@ class TimelineTrackCanvas(QWidget):
         h = self.height()
         mid_y = 36  # 上下軌道分界線
 
-        # 1. 溫潤雙層紙質底槽
+        # 1. 日系 Q 版圓角羊皮雙層底槽
         # 上層：影片與剪輯主軌
-        painter.fillRect(0, 0, w, mid_y, QColor(245, 242, 235))
+        painter.fillRect(0, 0, w, mid_y, QColor(255, 250, 240))
         # 下層：字幕專屬軌道
-        painter.fillRect(0, mid_y, w, h - mid_y, QColor(238, 234, 226))
+        painter.fillRect(0, mid_y, w, h - mid_y, QColor(242, 228, 199))
         
-        # 外框與軌道分界線
-        painter.setPen(QPen(QColor(218, 212, 200), 1.5))
-        painter.drawRoundedRect(0, 0, w, h, 6, 6)
-        painter.setPen(QPen(QColor(222, 216, 205), 1, Qt.PenStyle.DashLine))
-        painter.drawLine(0, mid_y, w, mid_y)
+        # 可可圓角外框與軌道分界線
+        painter.setPen(QPen(QColor(107, 69, 40), 2.5))
+        painter.drawRoundedRect(1, 1, w - 2, h - 2, 10, 10)
+        painter.setPen(QPen(QColor(184, 149, 104), 1.5, Qt.PenStyle.DashLine))
+        painter.drawLine(2, mid_y, w - 2, mid_y)
 
         # 2. 上軌：繪製未覆蓋安全警示細線 (頂部陶土紅 ⚠️)
         for ur_start, ur_end in self.uncovered_ranges:
@@ -293,8 +293,8 @@ class TimelineTrackCanvas(QWidget):
 
         # 7. 下軌：繪製 Pro 字幕色塊與文字內容 🎙️
         font = painter.font()
-        font.setFamily("Microsoft JhengHei")
-        font.setPointSize(9)
+        font.setFamily("Microsoft JhengHei UI")
+        font.setPointSize(10)
         font.setBold(True)
         painter.setFont(font)
 
@@ -509,13 +509,21 @@ class TimelineWidget(QWidget):
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(10, 4, 10, 6)
+        main_layout.setContentsMargins(8, 4, 8, 4)
         main_layout.setSpacing(6)
 
-        # 頂部剪輯範圍提示標籤
-        self.lbl_range_info = QLabel("✂ 工作區間: 00:00:00.000 ~ 00:00:00.000 (整部影片)")
-        self.lbl_range_info.setStyleSheet("font-weight: 600; color: #4a6882; font-size: 11px;")
-        main_layout.addWidget(self.lbl_range_info)
+        # 頂部資訊列：左側工作區間摘要、右側單行時間碼
+        info_row = QHBoxLayout()
+        info_row.setContentsMargins(2, 0, 2, 0)
+        self.lbl_range_info = QLabel("✂ 工作區間：整部影片")
+        self.lbl_range_info.setStyleSheet("font-weight: 600; color: #563a1f; font-size: 12.5px;")
+        info_row.addWidget(self.lbl_range_info)
+        info_row.addStretch()
+
+        self.lbl_time = QLabel("00:00:00.000 / 00:00:00.000")
+        self.lbl_time.setStyleSheet("font-family: Consolas, monospace; font-size: 13.5px; font-weight: bold; color: #3b2412;")
+        info_row.addWidget(self.lbl_time)
+        main_layout.addLayout(info_row)
 
         # 時間軸軌道
         self.canvas = TimelineTrackCanvas()
@@ -534,98 +542,114 @@ class TimelineWidget(QWidget):
         transcript_layout.setContentsMargins(0, 0, 0, 0)
         transcript_layout.addWidget(QLabel("🎙 聽打："))
         self.edit_transcript = QLineEdit()
-        self.edit_transcript.setPlaceholderText("⌨️ 邊聽邊打字，按 Enter 自動建立這句字幕 (VAD 智慧磁吸)...")
+        self.edit_transcript.setMinimumHeight(34)
+        self.edit_transcript.setPlaceholderText("⌨️ 邊聽邊打字，按 Enter 自動建立字幕 (VAD 智慧磁吸)...")
         self.edit_transcript.returnPressed.connect(lambda: self.transcript_submitted.emit(self.edit_transcript.text()))
         transcript_layout.addWidget(self.edit_transcript, 1)
-        btn_add = QPushButton("新增 (Enter)")
+        btn_add = QPushButton("新增")
+        btn_add.setProperty("class", "compact-btn")
+        btn_add.setToolTip("建立這句字幕 (Enter)")
         btn_add.clicked.connect(lambda: self.transcript_submitted.emit(self.edit_transcript.text()))
         transcript_layout.addWidget(btn_add)
         main_layout.addWidget(self.widget_transcript)
 
-        self.lbl_edit_context = QLabel("目前編輯：✂ 影片工作區間")
-        self.lbl_edit_context.setStyleSheet("font-weight: 600; color: #4a6882; padding: 2px 4px;")
-        main_layout.addWidget(self.lbl_edit_context)
+        # 單排群組化控制列：播放 | 工作區間 | 關鍵影格 | 縮放
+        edit_layout = QHBoxLayout()
+        edit_layout.setSpacing(8)
 
-        # 控制列
-        ctrl_layout = QHBoxLayout()
-        ctrl_layout.setSpacing(6)
+        def make_group():
+            box = QFrame()
+            box.setObjectName("timelineGroup")
+            box_layout = QHBoxLayout(box)
+            box_layout.setContentsMargins(4, 3, 4, 3)
+            box_layout.setSpacing(3)
+            return box, box_layout
 
-        self.btn_step_back = QPushButton("◀ 上一格")
+        play_group, play_layout = make_group()
+        self.btn_step_back = QPushButton("◀")
+        self.btn_step_back.setProperty("class", "compact-btn")
         self.btn_step_back.setToolTip("上一幀 (J)")
         self.btn_step_back.clicked.connect(lambda: self.step_requested.emit(-1))
-        ctrl_layout.addWidget(self.btn_step_back)
+        play_layout.addWidget(self.btn_step_back)
 
         self.btn_play = QPushButton("▶ 播放")
-        self.btn_play.setStyleSheet("font-weight: bold; padding: 6px 16px; min-width: 60px;")
+        self.btn_play.setStyleSheet("font-weight: bold; padding: 4px 12px; min-width: 66px;")
+        self.btn_play.setToolTip("播放 / 暫停 (Space)")
         self.btn_play.clicked.connect(self._toggle_play)
-        ctrl_layout.addWidget(self.btn_play)
+        play_layout.addWidget(self.btn_play)
 
-        self.btn_step_fwd = QPushButton("下一格 ▶")
+        self.btn_step_fwd = QPushButton("▶")
+        self.btn_step_fwd.setProperty("class", "compact-btn")
         self.btn_step_fwd.setToolTip("下一幀 (L)")
         self.btn_step_fwd.clicked.connect(lambda: self.step_requested.emit(1))
-        ctrl_layout.addWidget(self.btn_step_fwd)
+        play_layout.addWidget(self.btn_step_fwd)
+        edit_layout.addWidget(play_group)
 
-        main_layout.addLayout(ctrl_layout)
+        # Work Range 永遠只控制影片剪輯區間
+        range_group, range_layout = make_group()
+        self.btn_in = QPushButton("設起點")
+        self.btn_in.setProperty("class", "compact-btn")
+        self.btn_in.setToolTip("設定影片剪輯工作區間起點 (I)")
+        self.btn_in.clicked.connect(self.set_in_point.emit)
+        range_layout.addWidget(self.btn_in)
 
-        edit_layout = QHBoxLayout()
-        edit_layout.setSpacing(6)
+        self.btn_out = QPushButton("設終點")
+        self.btn_out.setProperty("class", "compact-btn")
+        self.btn_out.setToolTip("設定影片剪輯工作區間終點 (O)")
+        self.btn_out.clicked.connect(self.set_out_point.emit)
+        range_layout.addWidget(self.btn_out)
 
-        # 關鍵影格導航
-        self.btn_prev_kf = QPushButton("⏮ 上個關鍵格")
+        self.btn_reset_range = QPushButton("全片")
+        self.btn_reset_range.setProperty("class", "compact-btn")
+        self.btn_reset_range.setToolTip("重設工作區間為整部影片 (R)")
+        self.btn_reset_range.clicked.connect(self.reset_range_requested.emit)
+        range_layout.addWidget(self.btn_reset_range)
+        edit_layout.addWidget(range_group)
+
+        # 關鍵影格導航（僅去識別 / 完整模式顯示）
+        self.kf_group, kf_layout = make_group()
+        self.btn_prev_kf = QPushButton("⏮")
+        self.btn_prev_kf.setProperty("class", "compact-btn")
         self.btn_prev_kf.setToolTip("跳至上一個關鍵影格 ([)")
         self.btn_prev_kf.clicked.connect(self.prev_keyframe_requested.emit)
-        edit_layout.addWidget(self.btn_prev_kf)
+        kf_layout.addWidget(self.btn_prev_kf)
 
-        self.btn_toggle_kf = QPushButton("🔷 標記關鍵格")
-        self.btn_toggle_kf.setToolTip("在當前秒數新增或刪除關鍵影格 (K)")
-        self.btn_toggle_kf.setStyleSheet("color: #b45309; font-weight: bold;")
+        self.btn_toggle_kf = QPushButton("🔷 關鍵格")
+        self.btn_toggle_kf.setProperty("class", "compact-btn")
+        self.btn_toggle_kf.setToolTip("在目前秒數標記或移除關鍵影格 (K)")
+        self.btn_toggle_kf.setStyleSheet("color: #9e5316; font-weight: bold;")
         self.btn_toggle_kf.clicked.connect(self.toggle_keyframe_at_current.emit)
-        edit_layout.addWidget(self.btn_toggle_kf)
+        kf_layout.addWidget(self.btn_toggle_kf)
 
-        self.btn_next_kf = QPushButton("下個關鍵格 ⏭")
+        self.btn_next_kf = QPushButton("⏭")
+        self.btn_next_kf.setProperty("class", "compact-btn")
         self.btn_next_kf.setToolTip("跳至下一個關鍵影格 (])")
         self.btn_next_kf.clicked.connect(self.next_keyframe_requested.emit)
-        edit_layout.addWidget(self.btn_next_kf)
-
-        edit_layout.addSpacing(10)
-
-        # Work Range 手動按鈕
-        self.btn_in = QPushButton("設起點 (I)")
-        self.btn_in.clicked.connect(self.set_in_point.emit)
-        edit_layout.addWidget(self.btn_in)
-
-        self.btn_out = QPushButton("設終點 (O)")
-        self.btn_out.clicked.connect(self.set_out_point.emit)
-        edit_layout.addWidget(self.btn_out)
-
-        self.btn_reset_range = QPushButton("🔄 重設")
-        self.btn_reset_range.setToolTip("重設工作區間為整部影片")
-        self.btn_reset_range.clicked.connect(self.reset_range_requested.emit)
-        edit_layout.addWidget(self.btn_reset_range)
-
-        # 縮放工具按鈕組 (剪映同款)
-        edit_layout.addSpacing(10)
-        self.btn_zoom_out = QPushButton("🔍 縮小")
-        self.btn_zoom_out.setToolTip("縮小時間軸檢視 (Ctrl + 滑鼠滾輪向下)")
-        self.btn_zoom_out.clicked.connect(lambda: self.canvas.set_zoom(self.canvas.zoom_factor * 0.75))
-        edit_layout.addWidget(self.btn_zoom_out)
-
-        self.btn_zoom_in = QPushButton("🔍 放大")
-        self.btn_zoom_in.setToolTip("放大時間軸檢視，精確微調字幕 (Ctrl + 滑鼠滾輪向上)")
-        self.btn_zoom_in.clicked.connect(lambda: self.canvas.set_zoom(self.canvas.zoom_factor * 1.35))
-        edit_layout.addWidget(self.btn_zoom_in)
-
-        self.btn_zoom_fit = QPushButton("📐 全覽")
-        self.btn_zoom_fit.setToolTip("重設為全片最適總覽 (100%)")
-        self.btn_zoom_fit.clicked.connect(self.canvas.reset_zoom)
-        edit_layout.addWidget(self.btn_zoom_fit)
+        kf_layout.addWidget(self.btn_next_kf)
+        edit_layout.addWidget(self.kf_group)
 
         edit_layout.addStretch()
 
-        # 時間碼顯示
-        self.lbl_time = QLabel("00:00:00.000 / 00:00:00.000")
-        self.lbl_time.setStyleSheet("font-family: Consolas, monospace; font-size: 13px; font-weight: bold; color: #4a6882;")
-        edit_layout.addWidget(self.lbl_time)
+        # 縮放按鈕組
+        zoom_group, zoom_layout = make_group()
+        self.btn_zoom_out = QPushButton("−")
+        self.btn_zoom_out.setProperty("class", "compact-btn")
+        self.btn_zoom_out.setToolTip("縮小時間軸檢視 (- 或 Ctrl + 滑鼠滾輪向下)")
+        self.btn_zoom_out.clicked.connect(lambda: self.canvas.set_zoom(self.canvas.zoom_factor * 0.75))
+        zoom_layout.addWidget(self.btn_zoom_out)
+
+        self.btn_zoom_in = QPushButton("+")
+        self.btn_zoom_in.setProperty("class", "compact-btn")
+        self.btn_zoom_in.setToolTip("放大時間軸檢視 (= 或 Ctrl + 滑鼠滾輪向上)")
+        self.btn_zoom_in.clicked.connect(lambda: self.canvas.set_zoom(self.canvas.zoom_factor * 1.35))
+        zoom_layout.addWidget(self.btn_zoom_in)
+
+        self.btn_zoom_fit = QPushButton("全覽")
+        self.btn_zoom_fit.setProperty("class", "compact-btn")
+        self.btn_zoom_fit.setToolTip("重設為全片最適總覽 (0)")
+        self.btn_zoom_fit.clicked.connect(self.canvas.reset_zoom)
+        zoom_layout.addWidget(self.btn_zoom_fit)
+        edit_layout.addWidget(zoom_group)
 
         main_layout.addLayout(edit_layout)
 
@@ -663,30 +687,6 @@ class TimelineWidget(QWidget):
         self.out_time = duration
         self.update_state(0.0, self.in_time, self.out_time, [])
 
-    def set_edit_context(self, icon: str, label: str, start: float, end: float, reset_text: str):
-        self.lbl_edit_context.setText(f"目前編輯：{icon} {label}　{self._format_time(start)} ～ {self._format_time(end)}")
-        self.btn_reset_range.setText(reset_text)
-        
-        # 動態切換按鈕文字，讓使用者 100% 清楚當前作用對象
-        if icon == "🎙":
-            self.btn_in.setText("🎙 設這句開始 (I)")
-            self.btn_in.setToolTip("將選取的字幕開始時間設為當前秒數 (I)")
-            self.btn_out.setText("🎙 設這句結束 (O)")
-            self.btn_out.setToolTip("將選取的字幕結束時間設為當前秒數 (O)")
-            self.btn_reset_range.setEnabled(False)
-        elif icon == "🎭":
-            self.btn_in.setText("🎭 設遮蔽開始 (I)")
-            self.btn_in.setToolTip("將選取的遮蔽起始時間設為當前秒數 (I)")
-            self.btn_out.setText("🎭 設遮蔽結束 (O)")
-            self.btn_out.setToolTip("將選取的遮蔽結束時間設為當前秒數 (O)")
-            self.btn_reset_range.setEnabled(False)
-        else:
-            self.btn_in.setText("✂ 設剪輯起點 (I)")
-            self.btn_in.setToolTip("設定全片剪輯/工作區間起點 (I)")
-            self.btn_out.setText("✂ 設剪輯終點 (O)")
-            self.btn_out.setToolTip("設定全片剪輯/工作區間終點 (O)")
-            self.btn_reset_range.setEnabled(True)
-
     def update_state(self, current_time: float, in_time: float, out_time: float, keyframe_times: List[float], speech_segments: list = None, subtitles: list = None, selected_sub_id: int = -1, uncovered_ranges: list = None, pending_ranges: list = None, reviewed_ranges: list = None):
         self.current_time = current_time
         self.in_time = in_time
@@ -704,9 +704,9 @@ class TimelineWidget(QWidget):
         out_str = self._format_time(self.out_time)
         len_sec = self.out_time - self.in_time
         if abs(len_sec - self.duration) < 0.1 or len_sec <= 0:
-            self.lbl_range_info.setText(f"✂ 工作區間: {in_str} ~ {out_str} (整部影片，長度: {len_sec:.2f} 秒)")
+            self.lbl_range_info.setText(f"✂ 工作區間：{in_str} ~ {out_str}（整片 {len_sec:.1f}s）")
         else:
-            self.lbl_range_info.setText(f"✂ 剪輯工作區間: {in_str} ~ {out_str} (⭐ 已選取精華: {len_sec:.2f} 秒)")
+            self.lbl_range_info.setText(f"✂ 選取區間：{in_str} ~ {out_str}（{len_sec:.1f}s）")
 
     def update_time_display(self, current_time: float):
         self.update_state(current_time, self.in_time, self.out_time, self.keyframe_times)
@@ -731,39 +731,13 @@ class TimelineWidget(QWidget):
         """依據工作模式切換時間軸控制項可見性
         mode: 'mask' | 'transcribe' | 'cut' | 'full'
         """
-        if mode == "mask":
-            self.widget_transcript.hide()
-            self.lbl_edit_context.show()
-            self.btn_prev_kf.show()
-            self.btn_toggle_kf.show()
-            self.btn_next_kf.show()
-            self.btn_in.show()
-            self.btn_out.show()
-            self.btn_reset_range.show()
-        elif mode == "transcribe":
-            self.widget_transcript.show()
-            self.lbl_edit_context.show()
-            self.btn_prev_kf.hide()
-            self.btn_toggle_kf.hide()
-            self.btn_next_kf.hide()
-            self.btn_in.show()
-            self.btn_out.show()
-            self.btn_reset_range.show()
-        elif mode == "cut":
-            self.widget_transcript.hide()
-            self.lbl_edit_context.show()
-            self.btn_prev_kf.hide()
-            self.btn_toggle_kf.hide()
-            self.btn_next_kf.hide()
-            self.btn_in.show()
-            self.btn_out.show()
-            self.btn_reset_range.show()
-        else:  # full
-            self.widget_transcript.show()
-            self.lbl_edit_context.show()
-            self.btn_prev_kf.show()
-            self.btn_toggle_kf.show()
-            self.btn_next_kf.show()
-            self.btn_in.show()
-            self.btn_out.show()
-            self.btn_reset_range.show()
+        show_kf = mode in ("mask", "full")
+        show_transcript = mode in ("transcribe", "full")
+        self.widget_transcript.setVisible(show_transcript)
+        self.kf_group.setVisible(show_kf)
+        self.btn_prev_kf.setVisible(show_kf)
+        self.btn_toggle_kf.setVisible(show_kf)
+        self.btn_next_kf.setVisible(show_kf)
+        self.btn_in.show()
+        self.btn_out.show()
+        self.btn_reset_range.show()

@@ -334,8 +334,9 @@ def test_mode_buttons_are_mask_cut_subtitle_only(window):
 
 
 def test_toolbar_polish_regressions(window):
-    assert window.lbl_safety_status.isHidden()  # 未載入影片時不重複提示
-    assert "縮小" in window.timeline.btn_zoom_out.text() and "放大" in window.timeline.btn_zoom_in.text()
+    assert window.lbl_safety_status.isHidden()  # 整合為單一狀態列，不再顯示重複橫幅
+    assert window.timeline.btn_zoom_out.text() == "−" and "縮小" in window.timeline.btn_zoom_out.toolTip()
+    assert window.timeline.btn_zoom_in.text() == "+" and "放大" in window.timeline.btn_zoom_in.toolTip()
     assert "AI 偵測" in window.lbl_review_summary.text()
 
 

@@ -80,6 +80,20 @@ class TrackEvaluator:
         return (left, top, max(0, right - left), max(0, bottom - top))
 
     @staticmethod
+    def unpad_rect(display_rect: Tuple[int, int, int, int], padding: float) -> Tuple[int, int, int, int]:
+        """由畫面顯示外擴框反推未外擴的 raw_rect，避免拖曳編輯時尺寸逐次膨脹。"""
+        dx, dy, dw, dh = display_rect
+        eff_pad = min(TrackEvaluator.MAX_PADDING, max(0.0, padding))
+        factor = 1.0 + 2.0 * eff_pad
+        raw_w = max(4, int(round(dw / factor)))
+        raw_h = max(4, int(round(dh / factor)))
+        cx = dx + dw / 2.0
+        cy = dy + dh / 2.0
+        raw_x = int(round(cx - raw_w / 2.0))
+        raw_y = int(round(cy - raw_h / 2.0))
+        return (raw_x, raw_y, raw_w, raw_h)
+
+    @staticmethod
     def evaluate_all_tracks_at(tracks: List[Track], current_time: float, video_w: int, video_h: int) -> List[Tuple[Track, Tuple[int, int, int, int]]]:
         """計算給定時間點所有有效 track 的 (track, rect) 列表"""
         results = []
