@@ -1,4 +1,4 @@
-# 🛡️ ClipMask-AI v1.2.0
+# 🛡️ ClipMask-AI v1.3.0
 
 開發驗收紀錄：[docs/ACCEPTANCE_RECORD.md](docs/ACCEPTANCE_RECORD.md)。
 
@@ -6,7 +6,7 @@
 > *Designed for Newsrooms, Law Enforcement, Public Sector & Privacy Protection.*
 
 [![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-v1.2.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v1.3.0-blue.svg)](CHANGELOG.md)
 [![GUI](https://img.shields.io/badge/GUI-PySide6%20%2F%20Qt6-41CD52?logo=qt&logoColor=white)](https://www.qt.io/)
 [![Engine](https://img.shields.io/badge/Video%20Engine-PyAV%20(FFmpeg%20C%20Binding)-007808?logo=ffmpeg&logoColor=white)](https://ffmpeg.org/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
