@@ -3,12 +3,15 @@
 ## 核心元資料 (Metadata)
 - **Repository**：lianghao02/ClipMask-AI
 - **Branch**：master
-- **Commit SHA**：a5632d7（發布準備前基準；發布提交與 tag v1.2.0 以 Git 記錄為準）
+- **Commit SHA**：`5372d58`（`v1.3.0` 發布提交，並於 `2026-11-22` 補充 README／ARCHITECTURE 流程圖；前版 `v1.2.0` 基準 `a5632d7`）
 - **Skill Version**：v1.0.0
-- **Task Type**：RELEASE
+- **Task Type**：RELEASE / DOCS
 - **Local Path Hint**：12_ClipMask-AI
 
 ---
+
+## 發布狀態 (v1.3.0 / 2026-11-19)
+已發布 **v1.3.0**（新增獨立精確壓縮工作頁 `CompressPage`／`compressor.py`、改進追蹤評估與時間軸審核工作流，完整 `92/92` `pytest` 通過）；`2026-11-22` 已同步補齊 `README.md` 影片壓縮介紹與 `ARCHITECTURE.md` 兩張 Mermaid 流程圖。以下保留 `v1.2.0` 發布與測試交接紀錄。
 
 ## 發布狀態 (v1.2.0)
 使用者已授權發布 v1.2.0。已完成：`version.txt`、README、CHANGELOG 更新，中央 `check_release_versions.py 12` 為 OK；pytest 77/77；PyInstaller 重新打包；`ClipMask-AI-v1.2.0-Portable.zip`（141247976 bytes，SHA-256 a07c9895486fdc7204e3958b6247e797254dcf293892867a193e79ecf27e6bc8）解壓至含中文與空白的路徑，以清除 Python 環境變數、不同工作目錄啟動，主視窗標題正確、存活 8 秒、正常關閉 exit code 0。未驗證：完整 GUI 人工操作、不同 Windows 使用者與乾淨電腦。tag、GitHub Release、附件回驗與 13_Project-Hub 展示同步結果見本輪回報與 Git／Release 記錄。
